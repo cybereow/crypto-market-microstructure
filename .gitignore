@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
-data/trading.db
-data/funding_cache/
+data/*.db
 research/*/output/
 .env

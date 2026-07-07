@@ -1,42 +1,67 @@
-# Trading Bot — v0.1
+# Trading Bot — v0.1 (Tabdeal)
 
-ساده، مرحله‌ای، با research framework. این نسخه ادغام دو تلاش قبلیه:
-یکی معماری کلی (research/ per idea, Strategy interface مشترک، فازبندی
-backtest → forward-test → paper → live)، یکی هم منطق واقعی بک‌تست
-funding arbitrage که قبلاً با داده‌ی واقعی تست و تأیید شده بود.
+استراتژی: **آربیتراژ بین‌صرافی‌ای اسپات (Tabdeal vs Nobitex)**.
 
-## چرا این ساختار
+## چرا این استراتژی، نه funding-rate arbitrage
 
-تلاش قبلی روی همین ایده به این دلیل شکست خورد که برای گرفتن تاریخچه‌ی
-funding rate از API زنده‌ی `fapi.binance.com` (از طریق ccxt) استفاده کرده
-بود، که از خیلی از محیط‌ها geo-block می‌شه. راه‌حل: تاریخچه‌ی funding و
-کندل‌های روزانه رو از آرشیو عمومی و بدون‌نیاز-به-کلید
-`data.binance.vision` می‌گیریم (`src/binance_funding.py`,
-`src/binance_klines.py`). ccxt (`src/collector.py`) فقط برای داده‌ی
-زنده‌ی فازهای بعدی (paper/live) استفاده می‌شه، نه برای بک‌تست.
+نسخه‌ی اول این پروژه (که موجوده توی history) فرض می‌کرد تبدیل مثل بایننس
+یه مکانیزم funding rate واقعی داره (Long Spot + Short Perp → جمع‌آوری
+funding). این فرض غلط بود — از مستندات رسمی `docs.tabdeal.org` تأیید شد:
+
+- محصول «اهرم حرفه‌ای» (`fapi`) هیچ `fundingRate`/`premiumIndex` endpoint
+  ای نداره.
+- `incomeType` های واقعی `/fapi/v1/income` این‌ها هستن:
+  `Transfer, TakerCommission, MakerCommission, TradePNL, AdlPNL, Liquidation, InsuranceFund`
+  — هیچ `FUNDING_FEE` توش نیست.
+- مکانیزم واقعی هزینه‌ی نگه‌داشتن پوزیشن، بهره‌ی وام مارجینه
+  (`GET /api/v1/margin/interestHistory`، انواع `ON_BORROW`/`PERIODIC`)، نه
+  پرداخت periodic بین لانگ و شورت. یعنی چیزی برای «جمع‌آوری» وجود نداره.
+- ضمناً `ccxt` اصلاً کلاس تبدیل رو نداره (`ccxt.exchanges` رو چک کردم — از
+  ۱۰۵ صرافی، هیچ‌کدوم تبدیل نیست)، پس `collector.py` مبتنی بر ccxt هم از
+  اول کار نمی‌کرد.
+
+آربیتراژ بین‌صرافی‌ای اسپات به هیچ‌کدوم این‌ها وابسته نیست — فقط به
+order book عمومی (بدون auth) هر دو صرافی نیاز داره، که واقعی و
+تأییدشده‌ست:
+
+```
+GET https://api1.tabdeal.org/r/api/v1/depth?symbol=USDTIRT&limit=N   [تأییدشده از docs.tabdeal.org]
+GET https://apiv2.nobitex.ir/v3/orderbook/USDTIRT                    [تأییدشده از github.com/nobitex/docs-api]
+```
+
+## ⚠️ محدودیت مهم این build
+
+محیطی که این کد توش نوشته شده نتونست به هیچ‌کدوم از این دو API متصل بشه —
+هر تلاش (هم برای تبدیل، هم برای نوبیتکس، هم برای دامنه‌های ایرانی دیگه)
+با HTTP 503 مواجه شد. **این کد از این محیط تست نشده.** قبل از هر تصمیمی،
+خودت `scripts/scan_irt_arb.py` رو از جایی که واقعاً قراره بات اجرا بشه
+اجرا کن و مطمئن شو داده‌ی واقعی (نه خطا) برمی‌گرده.
+
+همچنین کارمزد Nobitex توی `config.yaml` («۲۵ bps») **فقط placeholder**
+هست — قبل از اعتماد به `net_edge_bps` باید با نرخ واقعی جایگزینش کنی.
 
 ## ساختار پوشه
 
 ```
 trading-bot/
 ├── research/
-│   └── funding/
+│   └── irt_arbitrage/
 │       ├── hypothesis.md
 │       └── results.md
 ├── src/
-│   ├── config.py             # از config.yaml می‌خونه
-│   ├── binance_funding.py     # تاریخچه‌ی واقعی funding rate (data.binance.vision)
-│   ├── binance_klines.py      # کندل روزانه‌ی واقعی، برای چک لیکوئیدیشن
-│   ├── storage.py             # SQLite برای داده‌ی زنده (v0.3+)
-│   ├── collector.py           # جمع‌آوری زنده via ccxt (v0.3+)
-│   ├── strategy.py            # Strategy interface مشترک
-│   ├── backtester.py          # بک‌تست عمومی trade-signal (برای basis/grid بعدی)
+│   ├── config.py                    # از config.yaml می‌خونه
+│   ├── storage.py                    # SQLite برای snapshot های اسپرد (تنها منبع تاریخچه — آرشیو عمومی وجود نداره)
+│   ├── strategy.py                   # Strategy interface مشترک
+│   ├── backtester.py                 # بک‌تست عمومی trade-signal (برای استراتژی‌های بعدی)
+│   ├── exchanges/
+│   │   ├── tabdeal.py                 # کلاینت واقعی depth تبدیل
+│   │   └── nobitex.py                 # کلاینت واقعی orderbook نوبیتکس
 │   └── strategies/
-│       └── funding.py         # اقتصاد واقعی funding arb: فی به تفکیک پا، leverage، rolling window، pre-entry calculator
+│       └── irt_arbitrage.py           # محاسبه‌ی اسپرد، جهت معامله، net edge بعد از کارمزد
 ├── scripts/
-│   ├── run_backtest.py
-│   └── plan_entry.py
-├── data/                       # cache و db (gitignored)
+│   ├── scan_irt_arb.py                # مانیتور زنده + ذخیره‌ی snapshot
+│   └── analyze_irt_arb.py             # تحلیل آماری snapshot های جمع‌شده
+├── data/                               # db (gitignored)
 └── config.yaml
 ```
 
@@ -45,39 +70,25 @@ trading-bot/
 ```bash
 pip install -r requirements.txt
 
-# بک‌تست کامل (BTCUSDT + ETHUSDT، 2020-الان)
-python scripts/run_backtest.py
+# مانیتور زنده (هر ۱۵ ثانیه، طبق config.yaml) — بدون ثبت سفارش
+python scripts/scan_irt_arb.py
 
-# سریع‌تر: فقط BTC، فقط ۲ سال اخیر
-python scripts/run_backtest.py --symbols BTCUSDT --start 2024-01 --end 2026-06
+# فقط یه snapshot و خروج (برای تست اتصال)
+python scripts/scan_irt_arb.py --once
 
-# با leverage روی پای فیوچرز (اسپات همیشه ۱x می‌مونه)
-python scripts/run_backtest.py --symbols BTCUSDT --leverage 2
-
-# قبل از باز کردن پوزیشن واقعی: مبلغ دقیق هر پا، قیمت لیکوئیدیشن، چک‌لیست
-python scripts/plan_entry.py --capital 7000 --leverage 2 --symbol BTCUSDT
+# بعد از چند روز جمع‌آوری، تحلیل آماری
+python scripts/analyze_irt_arb.py
 ```
-
-نتیجه توی `research/funding/output/funding_summary.json` و
-`research/funding/output/{SYMBOL}_funding_history.csv`.
 
 ## چطور نتیجه رو بخونی
 
-- `naive_annualized_pct`: میانگین کل تاریخچه، سالانه‌شده — فرض اینکه این
-  میانگین برای همیشه ادامه پیدا کنه.
-- `apy.net_apy_pct` (taker/maker): بازده خالص واقعی روی سرمایه، بعد از
-  کارمزد واقعی هر دو پا (نیمی اسپات، نیمی مارجین شورت فیوچرز ۱x).
-- `rolling` (پنجره‌ی ۹۰ روزه): مهم‌ترین بخش — نشون می‌ده اگه دقیقاً الان
-  وارد بشی بازده واقعی چقدر نوسان داره (`min_pct` تا `max_pct`) و
-  `pct_windows_negative` یعنی چند درصد دوره‌ها اصلاً ضرر بوده.
-
-## Leverage
-
-فقط روی پای شورت فیوچرز اعمال می‌شه؛ پای اسپات همیشه بدون‌اهرمه. سقف
-ریاضی بازده حدود ۲ برابر حالت L=1 هست (نه بیشتر)، چون نصف سرمایه همیشه
-توی اسپات گیره. با leverage بالای ۱، بک‌تست خودکار کندل‌های روزانه‌ی
-واقعی رو می‌کشه بیرون و بدترین حرکت صعودی تاریخی (۱، ۷، ۳۰ روزه) رو با
-حاشیه‌ی لیکوئیدیشن مقایسه می‌کنه.
+- `net_edge_bps`: اسپرد بین دو صرافی بعد از کسر کارمزد هر دو (taker).
+  هزینه‌ی انتقال بین صرافی (کارمزد + زمان + ریسک نوسان قیمت دارایی انتقال،
+  مثلاً TRX) توش لحاظ نشده — باید جدا اضافه بشه.
+- `pct_time_viable` (از `analyze_irt_arb.py`): چند درصد از زمانِ جمع‌آوری‌شده
+  اسپرد بالای threshold بوده. اگه فقط چندتا spike نادر باشه، این استراتژی
+  عملاً قابل‌اجرا نیست (فرصت رد می‌شه قبل از این‌که بتونی دو تا سفارش رو
+  دستی/حتی برنامه‌ای اجرا کنی).
 
 ## Research Framework
 
@@ -86,52 +97,51 @@ Idea
  ↓
 research/{name}/hypothesis.md   ← فرضیه بنویس
  ↓
-run_backtest.py                 ← با داده‌ی واقعی
+scan_irt_arb.py                  ← چون آرشیو عمومی نیست، تاریخچه رو خودت می‌سازی
  ↓
-research/{name}/results.md      ← نتیجه بنویس
+analyze_irt_arb.py               ← بعد از چند روز جمع‌آوری
  ↓
-Forward Test                    ← همون backtest روی داده‌ی جدید (out-of-sample)
+research/{name}/results.md       ← نتیجه بنویس
  ↓
-Paper Trade                     ← با پول مجازی (v0.3 — هنوز ساخته نشده)
+Paper Trade                      ← با پول مجازی (v0.3 — هنوز ساخته نشده)
  ↓
-Small Capital ($100)            ← live (v1 — هنوز ساخته نشده)
+Small Capital                    ← live (v1 — هنوز ساخته نشده)
  ↓
-Scale                           ← (v2)
+Scale                            ← (v2)
 ```
 
 ## چک‌لیست
 
 ### v0.1 ← الان اینجایی
 ```
-[x] binance_funding.py / binance_klines.py داده‌ی واقعی می‌گیرن
-[x] strategies/funding.py اقتصاد واقعی (فی، leverage، rolling) رو حساب می‌کنه
-[x] plan_entry.py قبل از ورود واقعی محاسبه می‌کنه
-[ ] research/funding/hypothesis.md نهایی شده
-[ ] research/funding/results.md با نتیجه‌ی واقعی پر شده
+[x] tabdeal.py / nobitex.py با endpoint های واقعی و تأییدشده کار می‌کنن
+[x] irt_arbitrage.py اسپرد و net edge رو حساب می‌کنه
+[x] scan_irt_arb.py snapshot ها رو ذخیره می‌کنه
+[ ] از محیط واقعی deployment تست شده (این build نتونست — 503 همه‌جا)
+[ ] کارمزد واقعی Nobitex جایگزین placeholder شده
+[ ] چند روز داده‌ی واقعی جمع شده و research/irt_arbitrage/results.md پر شده
 ```
 
-### v0.2 — Signal Generator (out-of-sample)
+### v0.2
 ```
-[ ] forward_test روی بازه‌ی جدید اجرا شده
-[ ] نتیجه با v0.1 مقایسه شده (drift دیده می‌شه؟)
+[ ] هزینه‌ی انتقال (کارمزد TRX + زمان + slippage) به مدل net edge اضافه شده
+[ ] بررسی شده چند تا از فرصت‌ها واقعاً long enough بودن که یه ترید دستی/API بگیره
 ```
 
 ### v0.3 — Paper Trading
 ```
-[ ] یه PaperTrader مخصوص cash-flow (نه tick-buy/sell) ساخته بشه — چون
-    funding arb یه پوزیشن باز-نگه‌دار-ببند هست، نه دنباله‌ای از معاملات
-[ ] ۳۰ روز اجرا شده با collector.py زنده
-[ ] Slippage واقعی تخمین زده شده
+[ ] یه PaperTrader که واقعاً دو تا سفارش شبیه‌سازی‌شده (یکی هر صرافی) رو track کنه
+[ ] حساب واقعی (یا تست) روی هر دو صرافی — بدون سفارش واقعی
 ```
 
-### v1 — Live ($100)
+### v1 — Live
 ```
-[ ] Paper trading موفق بوده
-[ ] ۷ روز بدون مشکل اجرا شده
-[ ] Kill switch و alert روی قیمت لیکوئیدیشن تست شده
+[ ] سرمایه‌ی کوچیک، اجرای واقعی روی هر دو صرافی
+[ ] Kill switch اگه اسپرد برعکس شد وسط ترید
 ```
 
 ### v2
 ```
-[ ] استراتژی‌های جدید (basis, grid) اضافه شدن — از Strategy/Backtester عمومی استفاده می‌کنن
+[ ] صرافی سوم اضافه بشه (اگه edge بیشتری داشت)
+[ ] استراتژی‌های دیگه‌ی لیست (PAXG triangular, market making روی IRT) با همین Strategy/Backtester
 ```
