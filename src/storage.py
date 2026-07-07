@@ -4,6 +4,7 @@ scanner runs. There is no public historical archive for these spreads --
 the only way to get a historical dataset is to run
 scripts/scan_triangular.py and let it accumulate real snapshots over time.
 """
+import os
 import sqlite3
 
 import pandas as pd
@@ -13,7 +14,9 @@ from . import config
 
 class Storage:
     def __init__(self, db_path=None):
-        self.db = sqlite3.connect(db_path or config.DB_PATH)
+        db_path = db_path or config.DB_PATH
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.db = sqlite3.connect(db_path)
         self._init_tables()
 
     def _init_tables(self):
