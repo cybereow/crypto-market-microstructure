@@ -1,0 +1,26 @@
+exchange: binance
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+capital: 10000
+leverage: 1
+
+fees:
+  spot_maker_bps: 10.0
+  spot_taker_bps: 10.0
+  fut_maker_bps: 2.0
+  fut_taker_bps: 5.0
+
+funding:
+  start: "2020-01"
+  end: "2026-06"
+  rolling_window_days: 90
+  entry_threshold: 0.0001
+  exit_threshold: -0.0001
+
+data:
+  candle_timeframe: 1h
+  orderbook_depth: 20
+  cache_dir: data/funding_cache
+  output_dir: research/funding/output
+  db_path: data/trading.db

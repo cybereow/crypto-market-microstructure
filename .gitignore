@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+data/trading.db
+data/funding_cache/
+research/*/output/
+.env
