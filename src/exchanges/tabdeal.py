@@ -27,7 +27,10 @@ class TabdealClient:
     def get_exchange_info(self) -> list[dict]:
         resp = requests.get(f"{self.base_url}/exchangeInfo", timeout=TIMEOUT_SECONDS)
         resp.raise_for_status()
-        return resp.json()["symbols"]
+        data = resp.json()
+        # Docs show {"symbols": [...]}, but the live endpoint returns a bare
+        # list -- accept either so this doesn't break again if it changes.
+        return data["symbols"] if isinstance(data, dict) else data
 
     def get_depth(self, symbol: str, limit: int = 5) -> dict:
         resp = requests.get(
