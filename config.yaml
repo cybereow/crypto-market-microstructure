@@ -25,7 +25,10 @@ triangular:
   max_symbols: 100
   # How many depth requests to run at the same time. Higher = faster full
   # scans, but more load per second against an unconfirmed rate limit.
-  max_workers: 10
+  # Lowered from 10 -- real runs saw frequent DNS/timeout/502 errors at
+  # that level. The client now retries transient errors automatically, but
+  # keeping concurrency modest still helps the hit rate.
+  max_workers: 5
   poll_interval_seconds: 15
   # Minimum net edge (after 3 legs of taker fees) to flag as viable.
   min_net_edge_bps: 50
