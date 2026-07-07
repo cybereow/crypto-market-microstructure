@@ -12,7 +12,7 @@ TABDEAL_TAKER_FEE_BPS = float(_cfg["exchange"]["tabdeal"]["taker_fee_bps"])
 
 ANCHOR_SYMBOL = _cfg["triangular"]["anchor_symbol"]
 MAX_SYMBOLS = int(_cfg["triangular"]["max_symbols"])
-REQUEST_DELAY_MS = int(_cfg["triangular"]["request_delay_ms"])
+MAX_WORKERS = int(_cfg["triangular"]["max_workers"])
 POLL_INTERVAL_SECONDS = int(_cfg["triangular"]["poll_interval_seconds"])
 MIN_NET_EDGE_BPS = float(_cfg["triangular"]["min_net_edge_bps"])
 DEPTH_LIMIT = int(_cfg["triangular"]["depth_limit"])

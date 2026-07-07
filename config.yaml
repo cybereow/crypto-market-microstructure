@@ -17,12 +17,16 @@ exchange:
 
 triangular:
   anchor_symbol: USDTIRT
-  # Cap on how many base assets to scan per cycle, to avoid hammering the
-  # API with hundreds of depth requests every poll. Raise once you've
-  # confirmed the real rate limit from your own account/IP.
-  max_symbols: 30
-  request_delay_ms: 200
-  poll_interval_seconds: 30
+  # Cap on how many base assets to scan per cycle. Requests run in
+  # parallel (max_workers), so raising this mostly costs a bit more time
+  # per cycle, not linearly more wall-clock time. Still capped rather than
+  # scanning everything, since the real API rate limit is unconfirmed --
+  # raise gradually and watch for errors/blocking.
+  max_symbols: 100
+  # How many depth requests to run at the same time. Higher = faster full
+  # scans, but more load per second against an unconfirmed rate limit.
+  max_workers: 10
+  poll_interval_seconds: 15
   # Minimum net edge (after 3 legs of taker fees) to flag as viable.
   min_net_edge_bps: 50
   depth_limit: 5
