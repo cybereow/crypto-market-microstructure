@@ -1,13 +1,15 @@
 """
 Minimal REST client for Tabdeal's public (no-auth) spot market data.
 
-Endpoint shape confirmed from the official docs.tabdeal.org page provided
+Endpoint shapes confirmed from the official docs.tabdeal.org page provided
 by the user (not ccxt -- ccxt has no "tabdeal" exchange class):
 
     GET https://api1.tabdeal.org/r/api/v1/depth?symbol=USDTIRT&limit=5
+    GET https://api1.tabdeal.org/r/api/v1/exchangeInfo
 
-Response: {"bids": [[price_str, qty_str], ...], "asks": [[price_str, qty_str], ...]}
-same [price, quantity] string-pair format as Binance.
+depth response: {"bids": [[price_str, qty_str], ...], "asks": [[price_str, qty_str], ...]}
+exchangeInfo response: {"symbols": [{"symbol": "BTCIRT", "baseAsset": "BTC",
+                                      "quoteAsset": "IRT", "status": "TRADING", ...}, ...]}
 """
 from __future__ import annotations
 
@@ -21,6 +23,11 @@ TIMEOUT_SECONDS = 10
 class TabdealClient:
     def __init__(self, base_url=None):
         self.base_url = base_url or config.TABDEAL_BASE_URL
+
+    def get_exchange_info(self) -> list[dict]:
+        resp = requests.get(f"{self.base_url}/exchangeInfo", timeout=TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return resp.json()["symbols"]
 
     def get_depth(self, symbol: str, limit: int = 5) -> dict:
         resp = requests.get(

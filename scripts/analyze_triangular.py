@@ -1,8 +1,9 @@
 """
-Analyze snapshots collected by scan_irt_arb.py so far.
+Analyze snapshots collected by scan_triangular.py so far.
 
 Usage:
-    python scripts/analyze_irt_arb.py
+    python scripts/analyze_triangular.py
+    python scripts/analyze_triangular.py --base-asset BTC
 """
 import argparse
 import json
@@ -12,18 +13,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.storage import Storage
-from src.strategies.irt_arbitrage import IRTArbitrage
+from src.strategies.triangular_arbitrage import TriangularArbitrage
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pair", default="USDTIRT")
+    ap.add_argument("--base-asset", default=None)
     args = ap.parse_args()
 
     storage = Storage()
-    snapshots = storage.get_snapshots(args.pair)
+    snapshots = storage.get_snapshots(args.base_asset)
 
-    strat = IRTArbitrage()
+    strat = TriangularArbitrage()
     result = strat.backtest({"snapshots": snapshots})
     print(json.dumps(result, indent=2, default=str))
 

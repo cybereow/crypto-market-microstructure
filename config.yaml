@@ -1,35 +1,30 @@
-# Cross-exchange IRT spot arbitrage: Tabdeal vs Nobitex.
+# Triangular arbitrage within Tabdeal only: for every asset X listed
+# against both USDT and IRT, compare the "synthetic" X/IRT price implied
+# by (X/USDT * USDT/IRT) against the real quoted X/IRT price.
 #
-# Why this strategy, not funding-rate arb: Tabdeal's "FAPI" (leverage)
-# product has no fundingRate/premiumIndex endpoint and no FUNDING_FEE
-# income type (confirmed from official docs.tabdeal.org) -- its cost
-# mechanism is margin borrow interest, not a perpetual funding-rate
-# exchange between longs/shorts. Cross-exchange spot arbitrage needs
-# none of that; it only needs public order-book endpoints, which both
-# exchanges expose without authentication.
+# Why single-exchange, not cross-exchange: no second account, no transfer
+# risk/time, no dependency on another exchange's API or fee schedule.
+# Why not a specific asset (e.g. PAXG): PAXG is never mentioned anywhere
+# in Tabdeal's official API docs, so its existence there is unverified --
+# scanning every asset that actually has both markets (discovered live via
+# exchangeInfo) avoids betting on an unconfirmed claim.
 
-pairs:
-  - tabdeal_symbol: USDTIRT
-    nobitex_symbol: USDTIRT
-
-exchanges:
+exchange:
   tabdeal:
     base_url: https://api1.tabdeal.org/r/api/v1
     # bps, taker (VIP0, no discount) -- confirmed against docs.tabdeal.org
     taker_fee_bps: 10.0
-  nobitex:
-    base_url: https://apiv2.nobitex.ir
-    # PLACEHOLDER -- not yet confirmed against Nobitex's real fee schedule.
-    # Do not trust net-edge numbers until this is replaced with the real
-    # value from https://apidocs.nobitex.ir (or your own account tier).
-    taker_fee_bps: 25.0
 
-scan:
-  poll_interval_seconds: 15
-  # Minimum net edge (after both exchanges' taker fees) to flag as a real
-  # opportunity. Does NOT include withdrawal fee / transfer time / transfer
-  # price risk -- add those once you pick a transfer asset (e.g. TRX).
+triangular:
+  anchor_symbol: USDTIRT
+  # Cap on how many base assets to scan per cycle, to avoid hammering the
+  # API with hundreds of depth requests every poll. Raise once you've
+  # confirmed the real rate limit from your own account/IP.
+  max_symbols: 30
+  request_delay_ms: 200
+  poll_interval_seconds: 30
+  # Minimum net edge (after 3 legs of taker fees) to flag as viable.
   min_net_edge_bps: 50
   depth_limit: 5
-  db_path: data/irt_arb.db
-  output_dir: research/irt_arbitrage/output
+  db_path: data/triangular_arb.db
+  output_dir: research/triangular_arbitrage/output

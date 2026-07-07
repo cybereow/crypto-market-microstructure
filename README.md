@@ -1,67 +1,57 @@
-# Trading Bot — v0.1 (Tabdeal)
+# Trading Bot — v0.1 (Tabdeal, single-exchange)
 
-استراتژی: **آربیتراژ بین‌صرافی‌ای اسپات (Tabdeal vs Nobitex)**.
+استراتژی: **آربیتراژ مثلثی درون خودِ تبدیل** (X/USDT × USDT/IRT در مقابل X/IRT واقعی).
 
-## چرا این استراتژی، نه funding-rate arbitrage
+## مسیری که تا اینجا طی شد (برای این‌که دوباره تکرار نشه)
 
-نسخه‌ی اول این پروژه (که موجوده توی history) فرض می‌کرد تبدیل مثل بایننس
-یه مکانیزم funding rate واقعی داره (Long Spot + Short Perp → جمع‌آوری
-funding). این فرض غلط بود — از مستندات رسمی `docs.tabdeal.org` تأیید شد:
+۱. اول فرض شد تبدیل مثل بایننس funding rate داره → غلط بود (مستندات رسمی
+تأیید کرد: `fapi` نه `fundingRate` endpoint داره نه `FUNDING_FEE` توی
+`incomeType`ها؛ مکانیزم واقعی بهره‌ی وام مارجینه).
+۲. بعد آربیتراژ بین‌صرافی‌ای تبدیل↔نوبیتکس پیشنهاد شد → کاربر رد کرد
+(نوبیتکس نمی‌خواد).
+۳. الان: **آربیتراژ مثلثی تک‌صرافی** — فقط تبدیل، بدون فرض روی یه دارایی
+خاص مثل PAXG (که اصلاً توی مستندات رسمی تبدیل نیومده و وجودش تأیید نشده).
+دارایی‌های واجد شرایط از خودِ `exchangeInfo` زنده کشف می‌شن.
 
-- محصول «اهرم حرفه‌ای» (`fapi`) هیچ `fundingRate`/`premiumIndex` endpoint
-  ای نداره.
-- `incomeType` های واقعی `/fapi/v1/income` این‌ها هستن:
-  `Transfer, TakerCommission, MakerCommission, TradePNL, AdlPNL, Liquidation, InsuranceFund`
-  — هیچ `FUNDING_FEE` توش نیست.
-- مکانیزم واقعی هزینه‌ی نگه‌داشتن پوزیشن، بهره‌ی وام مارجینه
-  (`GET /api/v1/margin/interestHistory`، انواع `ON_BORROW`/`PERIODIC`)، نه
-  پرداخت periodic بین لانگ و شورت. یعنی چیزی برای «جمع‌آوری» وجود نداره.
-- ضمناً `ccxt` اصلاً کلاس تبدیل رو نداره (`ccxt.exchanges` رو چک کردم — از
-  ۱۰۵ صرافی، هیچ‌کدوم تبدیل نیست)، پس `collector.py` مبتنی بر ccxt هم از
-  اول کار نمی‌کرد.
+## هدف و محدودیت واقع‌بینانه
 
-آربیتراژ بین‌صرافی‌ای اسپات به هیچ‌کدوم این‌ها وابسته نیست — فقط به
-order book عمومی (بدون auth) هر دو صرافی نیاز داره، که واقعی و
-تأییدشده‌ست:
-
-```
-GET https://api1.tabdeal.org/r/api/v1/depth?symbol=USDTIRT&limit=N   [تأییدشده از docs.tabdeal.org]
-GET https://apiv2.nobitex.ir/v3/orderbook/USDTIRT                    [تأییدشده از github.com/nobitex/docs-api]
-```
+هدف کاربر: حداقل **$۲۰/ماه** با سرمایه‌ی زیر $۵۰۰ (یعنی ~۴-۶٪ ماهانه).
+این عدد برای یه استراتژی آربیتراژ کم‌ریسک هدف بالاییه. راهکار اینجا برای
+بالا بردن شانس رسیدن به این عدد: اسکن هم‌زمان ده‌ها دارایی (نه فقط یه
+جفت‌ارز ثابت) تا فرصت بیشتر پیدا بشه — ولی این فقط بعد از جمع‌آوری
+داده‌ی واقعی (نه قبلش) قابل تأییده.
 
 ## ⚠️ محدودیت مهم این build
 
-محیطی که این کد توش نوشته شده نتونست به هیچ‌کدوم از این دو API متصل بشه —
-هر تلاش (هم برای تبدیل، هم برای نوبیتکس، هم برای دامنه‌های ایرانی دیگه)
-با HTTP 503 مواجه شد. **این کد از این محیط تست نشده.** قبل از هر تصمیمی،
-خودت `scripts/scan_irt_arb.py` رو از جایی که واقعاً قراره بات اجرا بشه
-اجرا کن و مطمئن شو داده‌ی واقعی (نه خطا) برمی‌گرده.
-
-همچنین کارمزد Nobitex توی `config.yaml` («۲۵ bps») **فقط placeholder**
-هست — قبل از اعتماد به `net_edge_bps` باید با نرخ واقعی جایگزینش کنی.
+محیطی که این کد توش نوشته شده نتونست به `api1.tabdeal.org` وصل بشه (هر
+تلاش HTTP 503 داد). **این کد از این محیط تست نشده.** قبل از هر تصمیمی:
+```bash
+python scripts/scan_triangular.py --once
+```
+رو از جایی که واقعاً قراره بات اجرا بشه بزن و مطمئن شو داده‌ی واقعی
+(نه خطا) برمی‌گرده.
 
 ## ساختار پوشه
 
 ```
 trading-bot/
 ├── research/
-│   └── irt_arbitrage/
+│   └── triangular_arbitrage/
 │       ├── hypothesis.md
 │       └── results.md
 ├── src/
-│   ├── config.py                    # از config.yaml می‌خونه
-│   ├── storage.py                    # SQLite برای snapshot های اسپرد (تنها منبع تاریخچه — آرشیو عمومی وجود نداره)
-│   ├── strategy.py                   # Strategy interface مشترک
-│   ├── backtester.py                 # بک‌تست عمومی trade-signal (برای استراتژی‌های بعدی)
+│   ├── config.py                       # از config.yaml می‌خونه
+│   ├── storage.py                       # SQLite برای snapshot ها (تنها منبع تاریخچه)
+│   ├── strategy.py                      # Strategy interface مشترک
+│   ├── backtester.py                    # بک‌تست عمومی trade-signal (برای استراتژی‌های بعدی)
 │   ├── exchanges/
-│   │   ├── tabdeal.py                 # کلاینت واقعی depth تبدیل
-│   │   └── nobitex.py                 # کلاینت واقعی orderbook نوبیتکس
+│   │   └── tabdeal.py                    # کلاینت واقعی depth + exchangeInfo
 │   └── strategies/
-│       └── irt_arbitrage.py           # محاسبه‌ی اسپرد، جهت معامله، net edge بعد از کارمزد
+│       └── triangular_arbitrage.py       # کشف دارایی‌های واجد شرایط + محاسبه‌ی edge
 ├── scripts/
-│   ├── scan_irt_arb.py                # مانیتور زنده + ذخیره‌ی snapshot
-│   └── analyze_irt_arb.py             # تحلیل آماری snapshot های جمع‌شده
-├── data/                               # db (gitignored)
+│   ├── scan_triangular.py                # مانیتور زنده + ذخیره‌ی snapshot
+│   └── analyze_triangular.py             # تحلیل آماری snapshot های جمع‌شده
+├── data/                                  # db (gitignored)
 └── config.yaml
 ```
 
@@ -70,25 +60,37 @@ trading-bot/
 ```bash
 pip install -r requirements.txt
 
-# مانیتور زنده (هر ۱۵ ثانیه، طبق config.yaml) — بدون ثبت سفارش
-python scripts/scan_irt_arb.py
+# مانیتور زنده (هر ۳۰ ثانیه، طبق config.yaml) — بدون ثبت سفارش
+python scripts/scan_triangular.py
 
-# فقط یه snapshot و خروج (برای تست اتصال)
-python scripts/scan_irt_arb.py --once
+# فقط یه دور اسکن و خروج (برای تست اتصال)
+python scripts/scan_triangular.py --once
 
 # بعد از چند روز جمع‌آوری، تحلیل آماری
-python scripts/analyze_irt_arb.py
+python scripts/analyze_triangular.py
+python scripts/analyze_triangular.py --base-asset BTC
 ```
+
+## منطق محاسبه
+
+برای هر دارایی X که هم بازار `X/USDT` هم `X/IRT` داره:
+
+- **مسیر A** (IRT→X→USDT→IRT): بخر X با IRT، بفروش X به USDT، بفروش USDT به IRT
+  `gross = X_USDT_bid * USDT_IRT_bid / X_IRT_ask`
+- **مسیر B** (IRT→USDT→X→IRT): بخر USDT با IRT، بخر X با USDT، بفروش X به IRT
+  `gross = X_IRT_bid / (USDT_IRT_ask * X_USDT_ask)`
+
+هرکدوم gross بیشتری داشت انتخاب می‌شه؛ `net_edge_bps` بعد از کسر کارمزد
+هر ۳ پا (taker) حساب می‌شه.
 
 ## چطور نتیجه رو بخونی
 
-- `net_edge_bps`: اسپرد بین دو صرافی بعد از کسر کارمزد هر دو (taker).
-  هزینه‌ی انتقال بین صرافی (کارمزد + زمان + ریسک نوسان قیمت دارایی انتقال،
-  مثلاً TRX) توش لحاظ نشده — باید جدا اضافه بشه.
-- `pct_time_viable` (از `analyze_irt_arb.py`): چند درصد از زمانِ جمع‌آوری‌شده
-  اسپرد بالای threshold بوده. اگه فقط چندتا spike نادر باشه، این استراتژی
-  عملاً قابل‌اجرا نیست (فرصت رد می‌شه قبل از این‌که بتونی دو تا سفارش رو
-  دستی/حتی برنامه‌ای اجرا کنی).
+- `net_edge_bps`: سود خالص هر چرخه‌ی کامل، بعد از ۳ پا کارمزد. اسلیپیج و
+  محدودیت عمق واقعی بازار لحاظ نشده — عدد روی ۵ ردیف اول orderbook حسابه.
+- `pct_time_viable` (از `analyze_triangular.py`): چند درصد از زمان
+  جمع‌آوری‌شده، حداقل یه دارایی فرصت واقعی داشته.
+- `top_assets_by_max_edge`: اگه یه دارایی خاص مدام بالای لیست بود، ارزش
+  بررسی داره که آیا دلیل ساختاری داره (نه فقط نویز).
 
 ## Research Framework
 
@@ -97,11 +99,11 @@ Idea
  ↓
 research/{name}/hypothesis.md   ← فرضیه بنویس
  ↓
-scan_irt_arb.py                  ← چون آرشیو عمومی نیست، تاریخچه رو خودت می‌سازی
+scan_triangular.py               ← چون آرشیو عمومی نیست، تاریخچه رو خودت می‌سازی
  ↓
-analyze_irt_arb.py               ← بعد از چند روز جمع‌آوری
+analyze_triangular.py            ← بعد از چند روز جمع‌آوری
  ↓
-research/{name}/results.md       ← نتیجه بنویس
+research/{name}/results.md       ← نتیجه بنویس، تصمیم بگیر VIABLE/NOT
  ↓
 Paper Trade                      ← با پول مجازی (v0.3 — هنوز ساخته نشده)
  ↓
@@ -114,34 +116,35 @@ Scale                            ← (v2)
 
 ### v0.1 ← الان اینجایی
 ```
-[x] tabdeal.py / nobitex.py با endpoint های واقعی و تأییدشده کار می‌کنن
-[x] irt_arbitrage.py اسپرد و net edge رو حساب می‌کنه
-[x] scan_irt_arb.py snapshot ها رو ذخیره می‌کنه
+[x] tabdeal.py با exchangeInfo + depth واقعی کار می‌کنه
+[x] triangular_arbitrage.py دارایی‌های واجد شرایط رو کشف و edge رو حساب می‌کنه
+[x] scan_triangular.py snapshot ها رو ذخیره می‌کنه
 [ ] از محیط واقعی deployment تست شده (این build نتونست — 503 همه‌جا)
-[ ] کارمزد واقعی Nobitex جایگزین placeholder شده
-[ ] چند روز داده‌ی واقعی جمع شده و research/irt_arbitrage/results.md پر شده
+[ ] rate limit واقعی API تبدیل چک شده (max_symbols/request_delay فعلاً حدسیه)
+[ ] چند روز داده‌ی واقعی جمع شده و research/triangular_arbitrage/results.md پر شده
 ```
 
 ### v0.2
 ```
-[ ] هزینه‌ی انتقال (کارمزد TRX + زمان + slippage) به مدل net edge اضافه شده
-[ ] بررسی شده چند تا از فرصت‌ها واقعاً long enough بودن که یه ترید دستی/API بگیره
+[ ] بررسی عمق واقعی بازار در اندازه‌ی معامله‌ی واقعی (نه فقط ۵ ردیف اول)
+[ ] بررسی طول عمر فرصت‌ها — واسه دستی گرفتنشون به‌اندازه‌ی کافی طولانی هستن؟
 ```
 
 ### v0.3 — Paper Trading
 ```
-[ ] یه PaperTrader که واقعاً دو تا سفارش شبیه‌سازی‌شده (یکی هر صرافی) رو track کنه
-[ ] حساب واقعی (یا تست) روی هر دو صرافی — بدون سفارش واقعی
+[ ] PaperTrader که ۳ پای معامله رو شبیه‌سازی کنه
+[ ] حساب واقعی روی تبدیل — بدون سفارش واقعی
 ```
 
 ### v1 — Live
 ```
-[ ] سرمایه‌ی کوچیک، اجرای واقعی روی هر دو صرافی
-[ ] Kill switch اگه اسپرد برعکس شد وسط ترید
+[ ] سرمایه‌ی کوچیک (زیر $۵۰۰)، اجرای واقعی
+[ ] ردیابی این‌که واقعاً به $۲۰/ماه می‌رسه یا نه
+[ ] Kill switch اگه edge برعکس شد وسط اجرای ۳ پا
 ```
 
 ### v2
 ```
-[ ] صرافی سوم اضافه بشه (اگه edge بیشتری داشت)
-[ ] استراتژی‌های دیگه‌ی لیست (PAXG triangular, market making روی IRT) با همین Strategy/Backtester
+[ ] max_symbols رو بعد از تأیید rate limit افزایش بده (اسکن کل ~۵۰۰+ بازار)
+[ ] اگه edge کافی نبود، سراغ market making روی جفت‌ارزهای پراسپرد IRT برو
 ```

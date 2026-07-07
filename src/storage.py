@@ -1,10 +1,8 @@
 """
-SQLite storage for spread snapshots collected while the live scanner runs.
-
-There is no public historical archive for cross-exchange IRT spreads (unlike
-Binance's funding-rate CDN) -- the only way to get a historical dataset for
-this strategy is to run scripts/scan_irt_arb.py and let it accumulate real
-snapshots over time.
+SQLite storage for triangular-arbitrage snapshots collected while the live
+scanner runs. There is no public historical archive for these spreads --
+the only way to get a historical dataset is to run
+scripts/scan_triangular.py and let it accumulate real snapshots over time.
 """
 import sqlite3
 
@@ -20,30 +18,35 @@ class Storage:
 
     def _init_tables(self):
         self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS spread_snapshots (
-                pair TEXT, timestamp INTEGER,
-                tabdeal_bid REAL, tabdeal_ask REAL,
-                nobitex_bid REAL, nobitex_ask REAL,
-                net_edge_bps REAL, direction TEXT
+            CREATE TABLE IF NOT EXISTS triangular_snapshots (
+                base_asset TEXT, timestamp INTEGER,
+                x_usdt_bid REAL, x_usdt_ask REAL,
+                x_irt_bid REAL, x_irt_ask REAL,
+                usdt_irt_bid REAL, usdt_irt_ask REAL,
+                direction TEXT, gross_edge_bps REAL, net_edge_bps REAL
             );
         """)
         self.db.commit()
 
     def save_snapshot(self, snapshot: dict):
         self.db.execute(
-            "INSERT INTO spread_snapshots VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO triangular_snapshots VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
-                snapshot["pair"], snapshot["timestamp"],
-                snapshot["tabdeal_bid"], snapshot["tabdeal_ask"],
-                snapshot["nobitex_bid"], snapshot["nobitex_ask"],
-                snapshot["net_edge_bps"], snapshot["direction"],
+                snapshot["base_asset"], snapshot["timestamp"],
+                snapshot["x_usdt_bid"], snapshot["x_usdt_ask"],
+                snapshot["x_irt_bid"], snapshot["x_irt_ask"],
+                snapshot["usdt_irt_bid"], snapshot["usdt_irt_ask"],
+                snapshot["direction"], snapshot["gross_edge_bps"], snapshot["net_edge_bps"],
             )
         )
         self.db.commit()
 
-    def get_snapshots(self, pair, start=None, end=None) -> pd.DataFrame:
-        query = "SELECT * FROM spread_snapshots WHERE pair=?"
-        params = [pair]
+    def get_snapshots(self, base_asset=None, start=None, end=None) -> pd.DataFrame:
+        query = "SELECT * FROM triangular_snapshots WHERE 1=1"
+        params = []
+        if base_asset:
+            query += " AND base_asset=?"
+            params.append(base_asset)
         if start:
             query += " AND timestamp >= ?"
             params.append(start)
