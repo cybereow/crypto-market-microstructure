@@ -35,3 +35,19 @@ triangular:
   depth_limit: 5
   db_path: data/triangular_arb.db
   output_dir: research/triangular_arbitrage/output
+
+# LBank funding-rate arbitrage (Long Spot + Short Perp). Unlike Tabdeal,
+# LBank's perpetual-swap product has a real, live-confirmed fundingRate
+# field per symbol -- but no historical archive is documented, so this
+# self-collects a dataset the same way the triangular scanner does.
+lbank:
+  product_group: SwapU
+  # bps, one-shot per leg. UNCONFIRMED -- LBank's public spot fee docs gave
+  # an internally inconsistent example (makerCommission 0.10 vs
+  # takerCommission 10.00), and perp/contract fees aren't documented at
+  # all in what's public. Do not trust net_apy numbers until these are
+  # replaced with real values from your own LBank account.
+  spot_taker_fee_bps: 10.0
+  perp_taker_fee_bps: 10.0
+  poll_interval_seconds: 60
+  db_path: data/lbank_funding.db
