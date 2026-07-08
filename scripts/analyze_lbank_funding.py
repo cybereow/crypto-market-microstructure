@@ -20,13 +20,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", default=None)
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--capital", type=float, default=10000)
+    ap.add_argument("--leverage", type=float, default=1.0)
     args = ap.parse_args()
 
     storage = LBankStorage()
     snapshots = storage.get_snapshots(args.symbol)
 
-    strat = LBankFundingArb()
-    result = strat.backtest({"snapshots": snapshots})
+    strat = LBankFundingArb(leverage=args.leverage)
+    result = strat.backtest({"snapshots": snapshots}, capital=args.capital)
 
     if "per_symbol" in result:
         result["per_symbol"] = dict(list(result["per_symbol"].items())[:args.top])

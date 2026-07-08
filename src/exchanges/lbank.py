@@ -71,3 +71,19 @@ class LBankClient:
         )
         resp.raise_for_status()
         return resp.json()["data"]
+
+    def get_daily_klines(self, symbol: str, days: int = 180) -> list[list]:
+        """Real historical daily spot klines, confirmed working (unlike
+        Tabdeal, which has no public archive) -- used to ground the
+        leverage/liquidation-safety check in actual historical price
+        moves. Returns [[ts_seconds, open, high, low, close, volume], ...].
+        `time` is the query START point (seconds), not an end point."""
+        import time as _time
+        start = int(_time.time()) - days * 86400
+        resp = self.session.get(
+            f"{SPOT_BASE_URL}/v2/kline.do",
+            params={"symbol": symbol, "size": min(days, 2000), "type": "day1", "time": start},
+            timeout=TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        return resp.json()["data"]

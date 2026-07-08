@@ -24,17 +24,21 @@ class LBankStorage:
             CREATE TABLE IF NOT EXISTS lbank_funding_snapshots (
                 symbol TEXT, timestamp INTEGER,
                 funding_rate REAL, funding_interval_seconds INTEGER,
-                marked_price REAL
+                marked_price REAL, turnover_24h REAL
             );
         """)
+        try:
+            self.db.execute("ALTER TABLE lbank_funding_snapshots ADD COLUMN turnover_24h REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # already migrated
         self.db.commit()
 
     def save_snapshots(self, rows: list[dict]):
         self.db.executemany(
-            "INSERT INTO lbank_funding_snapshots VALUES (?,?,?,?,?)",
+            "INSERT INTO lbank_funding_snapshots VALUES (?,?,?,?,?,?)",
             [
                 (r["symbol"], r["timestamp"], r["funding_rate"],
-                 r["funding_interval_seconds"], r["marked_price"])
+                 r["funding_interval_seconds"], r["marked_price"], r.get("turnover_24h", 0))
                 for r in rows
             ]
         )
