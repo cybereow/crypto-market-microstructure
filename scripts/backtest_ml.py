@@ -30,7 +30,7 @@ def main():
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
 
-    print("Creating advanced features with pandas-ta...")
+    print("Creating advanced features...")
     df_features = create_features(df)
 
     # Slice the out-of-sample data FIRST to prevent any data leakage

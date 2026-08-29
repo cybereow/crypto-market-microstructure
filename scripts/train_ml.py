@@ -3,7 +3,7 @@ import os
 import sys
 
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 from xgboost import XGBClassifier
 from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
 from sklearn.metrics import accuracy_score, classification_report
@@ -19,24 +19,40 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['ret_1d'] = data['close'].pct_change()
     data['ret_3d'] = data['close'].pct_change(3)
 
-    # Advanced Indicators via pandas-ta
+    # Advanced Indicators implemented with pure pandas
     # 1. Trend: MACD
-    macd = data.ta.macd(fast=12, slow=26, signal=9)
-    if macd is not None:
-        data = pd.concat([data, macd], axis=1)
+    ema_12 = data['close'].ewm(span=12, adjust=False).mean()
+    ema_26 = data['close'].ewm(span=26, adjust=False).mean()
+    data['MACD_12_26_9'] = ema_12 - ema_26
+    data['MACDs_12_26_9'] = data['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
+    data['MACDh_12_26_9'] = data['MACD_12_26_9'] - data['MACDs_12_26_9']
 
     # 2. Momentum: RSI
-    data['rsi'] = data.ta.rsi(length=14)
+    delta = data['close'].diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ema_up = up.ewm(com=13, adjust=False).mean()
+    ema_down = down.ewm(com=13, adjust=False).mean()
+    rs = ema_up / ema_down
+    data['RSI_14'] = 100 - (100 / (1 + rs))
 
     # 3. Volatility: ATR and Bollinger Bands
-    data['atr'] = data.ta.atr(length=14)
-    bbands = data.ta.bbands(length=20, std=2)
-    if bbands is not None:
-        data = pd.concat([data, bbands], axis=1)
+    high_low = data['high'] - data['low']
+    high_close = np.abs(data['high'] - data['close'].shift())
+    low_close = np.abs(data['low'] - data['close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    data['ATR_14'] = true_range.rolling(14).mean()
+
+    sma_20 = data['close'].rolling(window=20).mean()
+    std_20 = data['close'].rolling(window=20).std()
+    data['BBU_20_2.0'] = sma_20 + (std_20 * 2)
+    data['BBL_20_2.0'] = sma_20 - (std_20 * 2)
+    data['BBM_20_2.0'] = sma_20
 
     # Moving Average Distance
-    data['sma_10'] = data.ta.sma(length=10)
-    data['sma_50'] = data.ta.sma(length=50)
+    data['sma_10'] = data['close'].rolling(window=10).mean()
+    data['sma_50'] = data['close'].rolling(window=50).mean()
     data['sma_dist'] = data['sma_10'] / data['sma_50'] - 1
 
     # Target: 1 if next day's return is positive, 0 otherwise
@@ -63,7 +79,7 @@ def main():
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
 
-    print("Creating advanced features with pandas-ta...")
+    print("Creating advanced features...")
     df_features = create_features(df)
 
     # Extract all created features (excluding price data, current bar's return, and target)

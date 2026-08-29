@@ -31,43 +31,33 @@ class PairsTradingStrategy:
         # Z-score of the spread
         df['zscore'] = (df['spread'] - rolling_spread_mean) / rolling_spread_std
 
-        # Signals
-        df['position_s1'] = 0
-        df['position_s2'] = 0
+        # Vectorized Signals
+        zscores = df['zscore'].values
+        pos_s1 = np.zeros(len(zscores))
+        pos_s2 = np.zeros(len(zscores))
 
-        # We hold positions
-        current_pos = 0 # 1 means long spread (Long S2, Short S1), -1 means short spread (Long S1, Short S2)
+        current_pos = 0
 
-        pos_s1 = []
-        pos_s2 = []
-
-        for z in df['zscore']:
+        for i in range(len(zscores)):
+            z = zscores[i]
             if np.isnan(z):
-                pos_s1.append(0)
-                pos_s2.append(0)
+                pos_s1[i] = 0
+                pos_s2[i] = 0
                 continue
 
             if z > self.z_entry_threshold:
-                # Ratio is too high -> S1 is overpriced relative to S2
-                # Short S1, Long S2
                 current_pos = -1
             elif z < -self.z_entry_threshold:
-                # Ratio is too low -> S1 is underpriced relative to S2
-                # Long S1, Short S2
                 current_pos = 1
             elif abs(z) < self.z_exit_threshold:
-                # Reverted to mean
                 current_pos = 0
 
             if current_pos == 1:
-                pos_s1.append(1)
-                pos_s2.append(-1)
+                pos_s1[i] = 1
+                pos_s2[i] = -1
             elif current_pos == -1:
-                pos_s1.append(-1)
-                pos_s2.append(1)
-            else:
-                pos_s1.append(0)
-                pos_s2.append(0)
+                pos_s1[i] = -1
+                pos_s2[i] = 1
 
         df['position_s1'] = pos_s1
         df['position_s2'] = pos_s2

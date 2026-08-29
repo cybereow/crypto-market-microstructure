@@ -26,25 +26,35 @@ def main():
         print("Error: One or both data files do not exist.")
         sys.exit(1)
 
-    df1 = pd.read_csv(path1, index_col='timestamp', parse_dates=True)
-    df2 = pd.read_csv(path2, index_col='timestamp', parse_dates=True)
+    df1 = pd.read_csv(path1, index_col='timestamp', parse_dates=True)['close']
+    df2 = pd.read_csv(path2, index_col='timestamp', parse_dates=True)['close']
 
-    # To prevent lookahead bias, we only backtest on the Out-of-Sample data (last 20%)
-    split_idx = int(len(df1) * 0.8)
-    s1 = df1['close'].iloc[split_idx:]
-    s2 = df2['close'].iloc[split_idx:]
+    # Align dates first to avoid mismatches
+    aligned_df = pd.concat([df1, df2], axis=1).dropna()
+    aligned_df.columns = ['S1', 'S2']
+
+    s1_full = aligned_df['S1']
+    s2_full = aligned_df['S2']
 
     print(f"Backtesting Pairs Strategy on Out-of-Sample data for {args.asset1} and {args.asset2}")
     print(f"Params: Z-Entry={args.z_entry}, Z-Exit={args.z_exit}, Window={args.window}")
 
     strategy = PairsTradingStrategy(z_entry_threshold=args.z_entry, z_exit_threshold=args.z_exit, window=args.window)
-    signals_df = strategy.generate_signals(s1, s2)
 
-    if signals_df.empty:
+    # Generate signals on FULL data so rolling Beta warm-up is completely accurate.
+    signals_df_full = strategy.generate_signals(s1_full, s2_full)
+
+    if signals_df_full.empty:
         print("Not enough data to backtest.")
         return
 
-    results_df = strategy.calculate_returns(signals_df)
+    # To prevent lookahead bias, calculate returns strictly on the Out-of-Sample data (last 20%)
+    split_idx = int(len(signals_df_full) * 0.8)
+    signals_oos = signals_df_full.iloc[split_idx:].copy()
+
+    results_df = strategy.calculate_returns(signals_oos)
+    # Recalculate OOS cumulative return starting from 1.0
+    results_df['cum_ret'] = (1 + results_df['strat_ret']).cumprod()
 
     total_return = results_df['cum_ret'].iloc[-1] - 1
     win_rate = (results_df['strat_ret'] > 0).sum() / (results_df['strat_ret'] != 0).sum() if (results_df['strat_ret'] != 0).sum() > 0 else 0

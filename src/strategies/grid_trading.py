@@ -55,21 +55,31 @@ class GridTradingStrategy:
                 # We hold cash, waiting for price to drop to this lower grid
                 grid_status[level] = 0
 
-        # Adjust starting inventory/cash based on the grid setup
-        total_inventory_needed = sum(v for v in grid_status.values())
-        cash = self.initial_capital - (total_inventory_needed * start_price)
-        inventory = total_inventory_needed
+        # Adjust starting inventory/cash safely: exactly 50% quote, 50% base
+        cash = self.initial_capital / 2.0
+        inventory = (self.initial_capital / 2.0) / start_price
 
-        for index, row in df.iterrows():
-            current_price = row['close']
-            high = row['high']
-            low = row['low']
+        # Optimize loop using Numpy arrays (vectorized extraction)
+        highs = df['high'].values
+        lows = df['low'].values
+        closes = df['close'].values
+        dates = df.index
 
-            # Check for buys (price dropped to or below a grid level we haven't bought yet)
+        # We track whether we were above or below a level on the PREVIOUS bar.
+        # This prevents the "buy triggers on wrong condition" bug, ensuring we only trigger
+        # when crossing the line, not just because `low <= level` while sitting above it.
+        prev_closes = np.roll(closes, 1)
+        prev_closes[0] = start_price
+
+        for i in range(len(closes)):
+            h = highs[i]
+            l = lows[i]
+            c = closes[i]
+            pc = prev_closes[i]
+
+            # Buys: The price must have started ABOVE the level and dropped TO or BELOW it.
             for level in grid_levels:
-                if low <= level and grid_status[level] == 0:
-                    # Buy at limit price `level` (not close price)
-                    # Apply slippage (buy price is slightly higher)
+                if pc > level and l <= level and grid_status[level] == 0:
                     exec_price = level * (1 + self.slippage_pct)
                     trade_value = trade_amount_quote
                     fee = trade_value * self.fee_pct
@@ -79,27 +89,23 @@ class GridTradingStrategy:
                         cash -= (trade_value + fee)
                         inventory += amount_bought
                         grid_status[level] = amount_bought
-                        trades.append({'time': index, 'type': 'buy', 'price': exec_price, 'amount': amount_bought})
+                        trades.append({'time': dates[i], 'type': 'buy', 'price': exec_price, 'amount': amount_bought})
 
-            # Check for sells (price rose to or above a grid level we are currently holding)
+            # Sells: The price must have started BELOW the level and rose TO or ABOVE it.
             for level in reversed(grid_levels):
-                if high >= level and grid_status[level] > 0:
-                    # Sell at limit price `level` (not close price)
-                    # Apply slippage (sell price is slightly lower)
+                if pc < level and h >= level and grid_status[level] > 0:
                     exec_price = level * (1 - self.slippage_pct)
                     amount_to_sell = grid_status[level]
 
-                    # Prevent selling what we don't have due to float rounding
                     if inventory >= amount_to_sell * 0.999:
                         trade_value = amount_to_sell * exec_price
                         fee = trade_value * self.fee_pct
                         cash += (trade_value - fee)
                         inventory -= amount_to_sell
-                        grid_status[level] = 0 # Mark as sold (ready to buy again)
-                        trades.append({'time': index, 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
+                        grid_status[level] = 0
+                        trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
 
-            # Record daily equity at close price
-            equity = cash + (inventory * current_price)
+            equity = cash + (inventory * c)
             equity_curve.append(equity)
 
         df_result = pd.DataFrame(index=df.index)
