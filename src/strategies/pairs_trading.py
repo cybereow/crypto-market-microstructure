@@ -18,13 +18,55 @@ class PairsTradingStrategy:
         df = pd.concat([s1, s2], axis=1).dropna()
         df.columns = ['S1', 'S2']
 
-        # Correct Spread Calculation: S1 - (beta * S2)
-        # We calculate the rolling hedge ratio (beta) using rolling covariance / rolling variance
-        rolling_cov = df['S1'].rolling(window=self.window).cov(df['S2'])
-        rolling_var = df['S2'].rolling(window=self.window).var()
+        # State-Space Kalman Filter for dynamic Hedge Ratio (beta)
+        # We assume S1 = beta * S2 + error
+        # Beta is a random walk state
+        delta = 1e-5
+        wt = delta / (1 - delta) * np.eye(2) # Process noise covariance
+        vt = 1e-3 # Measurement noise variance
+        theta = np.zeros((2, 1)) # State vector [alpha, beta]
+        P = np.zeros((2, 2)) # State covariance matrix
+        R = None # Expected variance of measurement
 
-        df['beta'] = rolling_cov / rolling_var
-        df['spread'] = df['S1'] - (df['beta'] * df['S2'])
+        betas = np.zeros(len(df))
+
+        S1_vals = df['S1'].values
+        S2_vals = df['S2'].values
+
+        for i in range(len(df)):
+            x = np.array([[1], [S2_vals[i]]])
+            y = S1_vals[i]
+
+            # Predict
+            # theta(t|t-1) = theta(t-1|t-1)
+            R = P + wt
+
+            # Measurement prediction
+            yhat = x.T.dot(theta)[0, 0]
+
+            # Measurement variance
+            Q = x.T.dot(R).dot(x)[0, 0] + vt
+
+            # Error
+            e = y - yhat
+
+            # Kalman gain
+            K = R.dot(x) / Q
+
+            # Update state
+            theta = theta + K * e
+
+            # Update covariance
+            P = R - K.dot(x.T).dot(R)
+
+            betas[i] = theta[1, 0]
+
+        df['beta'] = betas
+
+        # We use a rolling mean for beta to smooth the rapid updates of the Kalman Filter slightly
+        # This prevents overtrading from noise
+        df['beta_smoothed'] = df['beta'].rolling(window=self.window).mean().bfill()
+        df['spread'] = df['S1'] - (df['beta_smoothed'] * df['S2'])
 
         rolling_spread_mean = df['spread'].rolling(window=self.window).mean()
         rolling_spread_std = df['spread'].rolling(window=self.window).std()

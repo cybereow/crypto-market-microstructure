@@ -2,13 +2,15 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic"):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
         self.fee_pct = fee_pct
         self.slippage_pct = slippage_pct
         self.grid_type = grid_type
+        self.adaptive_atr_period = adaptive_atr_period
+        self.atr_multiplier = atr_multiplier
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -20,8 +22,27 @@ class GridTradingStrategy:
             return {}
 
         start_price = df['close'].iloc[0]
-        lower_bound = start_price * (1 - self.grid_range_pct/2)
-        upper_bound = start_price * (1 + self.grid_range_pct/2)
+
+        if self.adaptive_atr_period and self.adaptive_atr_period > 0:
+            # Calculate ATR using pure Pandas
+            high_low = df['high'] - df['low']
+            high_close = np.abs(df['high'] - df['close'].shift())
+            low_close = np.abs(df['low'] - df['close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = ranges.max(axis=1)
+            atr = true_range.rolling(self.adaptive_atr_period).mean().bfill()
+
+            # Start ATR is the ATR at the beginning of the backtest
+            start_atr = atr.iloc[0]
+            # Grid range is based on ATR
+            range_abs = start_atr * self.atr_multiplier
+            lower_bound = start_price - (range_abs / 2)
+            upper_bound = start_price + (range_abs / 2)
+            # Ensure lower bound is positive
+            lower_bound = max(1e-9, lower_bound)
+        else:
+            lower_bound = start_price * (1 - self.grid_range_pct/2)
+            upper_bound = start_price * (1 + self.grid_range_pct/2)
 
         # Create grid levels
         if self.grid_type == "geometric":
