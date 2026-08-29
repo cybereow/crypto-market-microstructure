@@ -86,10 +86,8 @@ def download_and_process_l2(symbol: str, date: str, timeframe: str = '1d') -> pd
     final_sums = pd.concat(aggregated_chunks)
     final_sums = final_sums.groupby(final_sums.index).sum()
 
-    # Calculate the true mathematical OBI for the final timeframe
-    final_sums['obi'] = final_sums['bid_qty'] / (final_sums['bid_qty'] + final_sums['ask_qty'] + 1e-9)
-
-    return final_sums[['obi']]
+    # Return the raw sums so cross-day aggregation doesn't suffer from mean-of-means bias
+    return final_sums[['bid_qty', 'ask_qty']]
 
 def main():
     parser = argparse.ArgumentParser(description="Download and process Binance L2 BookTicker Data for OBI.")
@@ -118,16 +116,24 @@ def main():
         print("No data was successfully downloaded and processed.")
         sys.exit(1)
 
+    # Combine all days
     result_df = pd.concat(all_obi)
-    # Ensure no duplicates in case of overlapping chunk boundaries
-    result_df = result_df.groupby(result_df.index).mean()
+
+    # Ensure no boundary overlaps by summing quantities across intersecting times
+    result_df = result_df.groupby(result_df.index).sum()
+
+    # Calculate the true mathematical OBI for the final dataset
+    result_df['obi'] = result_df['bid_qty'] / (result_df['bid_qty'] + result_df['ask_qty'] + 1e-9)
+
+    # We only need to save the final feature
+    final_feature_df = result_df[['obi']]
 
     safe_symbol = args.symbol
     filename = f"binance_l2obi_{safe_symbol}_{args.timeframe}.csv"
     filepath = os.path.join(OUTPUT_DIR, filename)
 
-    result_df.to_csv(filepath)
-    print(f"OBI Feature data saved to {filepath} ({len(result_df)} rows)")
+    final_feature_df.to_csv(filepath)
+    print(f"OBI Feature data saved to {filepath} ({len(final_feature_df)} rows)")
 
 if __name__ == "__main__":
     main()
