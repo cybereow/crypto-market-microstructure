@@ -1,148 +1,74 @@
-# Trading Bot — v0.1 (Tabdeal, single-exchange)
+# Trading Bot — v2.0 (Machine Learning & Statistical Arbitrage)
 
-استراتژی: **آربیتراژ مثلثی درون خودِ تبدیل** (X/USDT × USDT/IRT در مقابل X/IRT واقعی).
+این پروژه از یک ربات آربیتراژ مثلثی ناموفق، به یک فریم‌ورک پیشرفته‌تر برای استراتژی‌های کمی (Quantitative) مبتنی بر ماشین‌لرنینگ و آربیتراژ آماری تغییر کاربری داده است.
 
-## مسیری که تا اینجا طی شد (برای این‌که دوباره تکرار نشه)
+## استراتژی‌های جدید
 
-۱. اول فرض شد تبدیل مثل بایننس funding rate داره → غلط بود (مستندات رسمی
-تأیید کرد: `fapi` نه `fundingRate` endpoint داره نه `FUNDING_FEE` توی
-`incomeType`ها؛ مکانیزم واقعی بهره‌ی وام مارجینه).
-۲. بعد آربیتراژ بین‌صرافی‌ای تبدیل↔نوبیتکس پیشنهاد شد → کاربر رد کرد
-(نوبیتکس نمی‌خواد).
-۳. الان: **آربیتراژ مثلثی تک‌صرافی** — فقط تبدیل، بدون فرض روی یه دارایی
-خاص مثل PAXG (که اصلاً توی مستندات رسمی تبدیل نیومده و وجودش تأیید نشده).
-دارایی‌های واجد شرایط از خودِ `exchangeInfo` زنده کشف می‌شن.
+۱. **آربیتراژ آماری (Pairs Trading)**: پیدا کردن جفت‌ارزهایی که از نظر آماری هم‌بستگی بالایی دارند (Cointegrated) و معامله بر اساس Z-Score اسپرد آن‌ها.
+۲. **یادگیری ماشین (Machine Learning)**: استفاده از Random Forest برای پیش‌بینی جهت کندل بعدی بر اساس اندیکاتورهای تکنیکال (مثل SMA, Volatility) به عنوان ویژگی‌ها (Features).
 
-## هدف و محدودیت واقع‌بینانه
+## نصب و راه‌اندازی
 
-هدف کاربر: حداقل **$۲۰/ماه** با سرمایه‌ی زیر $۵۰۰ (یعنی ~۴-۶٪ ماهانه).
-این عدد برای یه استراتژی آربیتراژ کم‌ریسک هدف بالاییه. راهکار اینجا برای
-بالا بردن شانس رسیدن به این عدد: اسکن هم‌زمان ده‌ها دارایی (نه فقط یه
-جفت‌ارز ثابت) تا فرصت بیشتر پیدا بشه — ولی این فقط بعد از جمع‌آوری
-داده‌ی واقعی (نه قبلش) قابل تأییده.
-
-## ⚠️ محدودیت مهم
-
-محیطی که این کد توش نوشته شده (و حتی گوگل کولب) نتونستن به
-`api1.tabdeal.org` وصل بشن — احتمالاً چون IP خارج از ایرانه. از یه
-کامپیوتر با IP ایران (تست شده، کار کرد ✅) وصل می‌شه. اگه می‌خوای بدون
-روشن نگه‌داشتن کامپیوترت ۲۴ ساعته جمع‌آوری بشه، به یه سرور/VPS با IP
-ایران نیاز داری.
-
-## ساختار پوشه
-
-```
-trading-bot/
-├── research/
-│   └── triangular_arbitrage/
-│       ├── hypothesis.md
-│       └── results.md
-├── src/
-│   ├── config.py                       # از config.yaml می‌خونه
-│   ├── storage.py                       # SQLite برای snapshot ها (تنها منبع تاریخچه)
-│   ├── strategy.py                      # Strategy interface مشترک
-│   ├── backtester.py                    # بک‌تست عمومی trade-signal (برای استراتژی‌های بعدی)
-│   ├── exchanges/
-│   │   └── tabdeal.py                    # کلاینت واقعی depth + exchangeInfo
-│   └── strategies/
-│       └── triangular_arbitrage.py       # کشف دارایی‌های واجد شرایط + محاسبه‌ی edge
-├── scripts/
-│   ├── scan_triangular.py                # مانیتور زنده + ذخیره‌ی snapshot
-│   └── analyze_triangular.py             # تحلیل آماری snapshot های جمع‌شده
-├── data/                                  # db (gitignored)
-└── config.yaml
-```
-
-## اجرا
+ابتدا کتابخانه‌های مورد نیاز را نصب کنید:
 
 ```bash
 pip install -r requirements.txt
-
-# مانیتور زنده (هر ۱۵ ثانیه، همزمان روی چند دارایی — طبق config.yaml) — بدون ثبت سفارش
-python scripts/scan_triangular.py
-
-# فقط یه دور اسکن و خروج (برای تست اتصال)
-python scripts/scan_triangular.py --once
-
-# بعد از چند روز جمع‌آوری، تحلیل آماری
-python scripts/analyze_triangular.py
-python scripts/analyze_triangular.py --base-asset BTC
 ```
 
-## منطق محاسبه
+## نحوه استفاده
 
-برای هر دارایی X که هم بازار `X/USDT` هم `X/IRT` داره:
+### ۱. دریافت داده‌های تاریخی (Data Collection)
+از `ccxt` برای دانلود داده‌های OHLCV استفاده می‌شود.
 
-- **مسیر A** (IRT→X→USDT→IRT): بخر X با IRT، بفروش X به USDT، بفروش USDT به IRT
-  `gross = X_USDT_bid * USDT_IRT_bid / X_IRT_ask`
-- **مسیر B** (IRT→USDT→X→IRT): بخر USDT با IRT، بخر X با USDT، بفروش X به IRT
-  `gross = X_IRT_bid / (USDT_IRT_ask * X_USDT_ask)`
+```bash
+# دانلود داده روزانه بیت‌کوین از صرافی کراکن
+python scripts/download_data.py --exchange kraken --symbol BTC/USDT --timeframe 1d --limit 1000
 
-هرکدوم gross بیشتری داشت انتخاب می‌شه؛ `net_edge_bps` بعد از کسر کارمزد
-هر ۳ پا (taker) حساب می‌شه.
-
-## چطور نتیجه رو بخونی
-
-- `net_edge_bps`: سود خالص هر چرخه‌ی کامل، بعد از ۳ پا کارمزد. اسلیپیج و
-  محدودیت عمق واقعی بازار لحاظ نشده — عدد روی ۵ ردیف اول orderbook حسابه.
-- `pct_time_viable` (از `analyze_triangular.py`): چند درصد از زمان
-  جمع‌آوری‌شده، حداقل یه دارایی فرصت واقعی داشته.
-- `top_assets_by_max_edge`: اگه یه دارایی خاص مدام بالای لیست بود، ارزش
-  بررسی داره که آیا دلیل ساختاری داره (نه فقط نویز).
-
-## Research Framework
-
+# دانلود داده اتریوم برای جفت‌گیری
+python scripts/download_data.py --exchange kraken --symbol ETH/USDT --timeframe 1d --limit 1000
 ```
-Idea
- ↓
-research/{name}/hypothesis.md   ← فرضیه بنویس
- ↓
-scan_triangular.py               ← چون آرشیو عمومی نیست، تاریخچه رو خودت می‌سازی
- ↓
-analyze_triangular.py            ← بعد از چند روز جمع‌آوری
- ↓
-research/{name}/results.md       ← نتیجه بنویس، تصمیم بگیر VIABLE/NOT
- ↓
-Paper Trade                      ← با پول مجازی (v0.3 — هنوز ساخته نشده)
- ↓
-Small Capital                    ← live (v1 — هنوز ساخته نشده)
- ↓
-Scale                            ← (v2)
+*توجه: صرافی بایننس ممکن است در برخی مناطق مسدود باشد، به همین دلیل از کراکن به عنوان پیش‌فرض تست استفاده شده است.*
+
+### ۲. استراتژی آربیتراژ آماری (Pairs Trading)
+
+ابتدا جفت‌هایی که هم‌بستگی آماری دارند (Cointegration) را پیدا کنید:
+```bash
+python scripts/find_pairs.py
 ```
 
-## چک‌لیست
-
-### v0.1 ← الان اینجایی
-```
-[x] tabdeal.py با exchangeInfo + depth واقعی کار می‌کنه
-[x] triangular_arbitrage.py دارایی‌های واجد شرایط رو کشف و edge رو حساب می‌کنه
-[x] scan_triangular.py snapshot ها رو ذخیره می‌کنه
-[ ] از محیط واقعی deployment تست شده (این build نتونست — 503 همه‌جا)
-[ ] rate limit واقعی API تبدیل چک شده (max_symbols/max_workers فعلاً حدسیه)
-[ ] چند روز داده‌ی واقعی جمع شده و research/triangular_arbitrage/results.md پر شده
+سپس استراتژی را روی دو جفت بک‌تست بگیرید:
+```bash
+python scripts/backtest_pairs.py --asset1 kraken_BTC_USDT_1d.csv --asset2 kraken_ETH_USDT_1d.csv
 ```
 
-### v0.2
-```
-[ ] بررسی عمق واقعی بازار در اندازه‌ی معامله‌ی واقعی (نه فقط ۵ ردیف اول)
-[ ] بررسی طول عمر فرصت‌ها — واسه دستی گرفتنشون به‌اندازه‌ی کافی طولانی هستن؟
+### ۳. استراتژی ماشین‌لرنینگ (ML Strategy)
+
+ابتدا مدل را روی داده‌های یک ارز آموزش دهید. این اسکریپت اندیکاتورها را می‌سازد و یک مدل `RandomForestClassifier` را آموزش داده و ذخیره می‌کند:
+```bash
+python scripts/train_ml.py --data kraken_BTC_USDT_1d.csv
 ```
 
-### v0.3 — Paper Trading
-```
-[ ] PaperTrader که ۳ پای معامله رو شبیه‌سازی کنه
-[ ] حساب واقعی روی تبدیل — بدون سفارش واقعی
-```
-
-### v1 — Live
-```
-[ ] سرمایه‌ی کوچیک (زیر $۵۰۰)، اجرای واقعی
-[ ] ردیابی این‌که واقعاً به $۲۰/ماه می‌رسه یا نه
-[ ] Kill switch اگه edge برعکس شد وسط اجرای ۳ پا
+سپس بک‌تست مدل را روی داده‌های Out-of-Sample (تست نشده) اجرا کنید تا سود استراتژی در مقایسه با روش هولد کردن (Buy & Hold) بررسی شود:
+```bash
+python scripts/backtest_ml.py --data kraken_BTC_USDT_1d.csv
 ```
 
-### v2
+## ساختار پروژه
+
 ```
-[ ] max_symbols رو بعد از تأیید rate limit افزایش بده (اسکن کل ~۵۰۰+ بازار)
-[ ] اگه edge کافی نبود، سراغ market making روی جفت‌ارزهای پراسپرد IRT برو
+trading-bot/
+├── scripts/
+│   ├── download_data.py       # دانلود داده‌های OHLCV از طریق CCXT
+│   ├── find_pairs.py          # کشف جفت‌ارزهای هم‌بسته (Cointegration Test)
+│   ├── backtest_pairs.py      # بک‌تست آربیتراژ آماری
+│   ├── train_ml.py            # استخراج فیچرها و آموزش مدل ML
+│   └── backtest_ml.py         # بک‌تست استراتژی ML
+├── src/
+│   ├── config.py              # تنظیمات پروژه و مسیرها
+│   └── strategies/
+│       ├── pairs_trading.py   # منطق سیگنال‌های Pairs Trading (Z-Score)
+│       └── ml_strategy.py     # منطق سیگنال‌دهی مدل ML
+├── data/                      # داده‌های دانلود شده و مدل‌های ذخیره شده
+├── config.yaml                # فایل تنظیمات
+└── requirements.txt
 ```
