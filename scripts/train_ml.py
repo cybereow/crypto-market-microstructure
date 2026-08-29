@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from xgboost import XGBClassifier
 from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
@@ -41,7 +41,7 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     high_close = np.abs(data['high'] - data['close'].shift())
     low_close = np.abs(data['low'] - data['close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
+    true_range = ranges.max(axis=1)
     data['ATR_14'] = true_range.rolling(14).mean()
 
     sma_20 = data['close'].rolling(window=20).mean()

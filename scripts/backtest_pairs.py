@@ -52,7 +52,17 @@ def main():
     split_idx = int(len(signals_df_full) * 0.8)
     signals_oos = signals_df_full.iloc[split_idx:].copy()
 
+    # If the first bar of the OOS slice inherits an active position from the in-sample period,
+    # we must charge a transaction fee for it, otherwise we get a "free" entry.
     results_df = strategy.calculate_returns(signals_oos)
+
+    # Force the first trade diff to account for the inherited position
+    cost_per_trade = strategy.fee_pct + strategy.slippage_pct
+    initial_position_cost_s1 = abs(results_df['position_s1'].iloc[0]) * cost_per_trade
+    initial_position_cost_s2 = abs(results_df['position_s2'].iloc[0]) * cost_per_trade
+
+    results_df.loc[results_df.index[0], 'strat_ret'] -= (initial_position_cost_s1 + initial_position_cost_s2)
+
     # Recalculate OOS cumulative return starting from 1.0
     results_df['cum_ret'] = (1 + results_df['strat_ret']).cumprod()
 

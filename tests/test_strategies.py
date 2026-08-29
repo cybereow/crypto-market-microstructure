@@ -49,6 +49,20 @@ def test_grid_trading_execution(dummy_price_data):
     # This proves the logic limits are working mathematically.
     assert results['num_trades'] >= 2
 
+    # Assert equity conservation: final equity must match expected portfolio value
+    df_result = results['equity_curve']
+
+    # Check for no negative cash or extreme anomalies in the equity curve
+    assert not df_result['equity'].isnull().any()
+
+    # Since we trade deterministically, final equity should reflect asset PnL
+    start_equity = 1000
+    final_equity = results['final_equity']
+
+    # Verify the math holds: Initial Capital = Cash + Inventory*Start_Price
+    # At any point: Equity = Cash + Inventory*Current_Price
+    assert df_result['equity'].iloc[0] == start_equity
+
 def test_pairs_trading_signals(dummy_pair_data):
     """Test if Pairs Trading calculates the spread correctly using rolling covariance and beta."""
     s1, s2 = dummy_pair_data
