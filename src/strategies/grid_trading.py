@@ -117,6 +117,8 @@ class GridTradingStrategy:
 
         return {
             'final_equity': df_result['equity'].iloc[-1],
+            'final_cash': cash,
+            'final_inventory': inventory,
             'total_return': total_return,
             'buy_hold_return': buy_hold_return,
             'num_trades': len(trades),

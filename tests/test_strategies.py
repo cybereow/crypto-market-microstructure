@@ -63,6 +63,13 @@ def test_grid_trading_execution(dummy_price_data):
     # At any point: Equity = Cash + Inventory*Current_Price
     assert df_result['equity'].iloc[0] == start_equity
 
+    # Strictly assert final arithmetic consistency
+    last_close = dummy_price_data['close'].iloc[-1]
+    calculated_final_equity = results['final_cash'] + (results['final_inventory'] * last_close)
+
+    # We use np.isclose to handle minor floating point drift in cash/inventory arithmetic
+    assert np.isclose(final_equity, calculated_final_equity, atol=1e-9)
+
 def test_pairs_trading_signals(dummy_pair_data):
     """Test if Pairs Trading calculates the spread correctly using rolling covariance and beta."""
     s1, s2 = dummy_pair_data
