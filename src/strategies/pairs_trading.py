@@ -2,9 +2,10 @@ import pandas as pd
 import numpy as np
 
 class PairsTradingStrategy:
-    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, window=30, fee_pct=0.001, slippage_pct=0.001):
+    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, z_stop_loss=4.0, window=30, fee_pct=0.001, slippage_pct=0.001):
         self.z_entry_threshold = z_entry_threshold
         self.z_exit_threshold = z_exit_threshold
+        self.z_stop_loss = z_stop_loss
         self.window = window
         self.fee_pct = fee_pct
         self.slippage_pct = slippage_pct
@@ -45,7 +46,10 @@ class PairsTradingStrategy:
                 pos_s2[i] = 0
                 continue
 
-            if z > self.z_entry_threshold:
+            # Stop-loss check
+            if abs(z) > self.z_stop_loss:
+                current_pos = 0
+            elif z > self.z_entry_threshold:
                 current_pos = -1
             elif z < -self.z_entry_threshold:
                 current_pos = 1

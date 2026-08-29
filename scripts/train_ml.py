@@ -55,6 +55,18 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['sma_50'] = data['close'].rolling(window=50).mean()
     data['sma_dist'] = data['sma_10'] / data['sma_50'] - 1
 
+    # Volume and Momentum Features
+    if 'volume' in data.columns:
+        # Volume SMA
+        data['vol_sma_20'] = data['volume'].rolling(window=20).mean()
+        data['vol_ratio'] = data['volume'] / (data['vol_sma_20'] + 1e-9)
+
+        # On-Balance Volume (OBV)
+        obv = (np.sign(data['close'].diff()) * data['volume']).fillna(0).cumsum()
+        data['OBV'] = obv
+        data['OBV_sma_20'] = obv.rolling(window=20).mean()
+        data['OBV_dist'] = (obv - data['OBV_sma_20']) / (data['OBV_sma_20'].replace(0, 1e-9))
+
     # Target: 1 if next day's return is positive, 0 otherwise
     data['target'] = (data['ret_1d'].shift(-1) > 0).astype(int)
 

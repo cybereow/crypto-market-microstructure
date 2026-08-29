@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
     parser.add_argument("--grids", type=int, default=10, help="Number of grid levels")
     parser.add_argument("--range-pct", type=float, default=0.2, help="Grid range as a percentage of start price (e.g., 0.2 for +/- 10%)")
+    parser.add_argument("--grid-type", type=str, default="arithmetic", choices=["arithmetic", "geometric"], help="Type of grid spacing")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -23,8 +24,8 @@ def main():
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
 
-    print(f"Running Grid Trading Backtest (Grids: {args.grids}, Range: {args.range_pct*100}%)...")
-    strategy = GridTradingStrategy(num_grids=args.grids, grid_range_pct=args.range_pct)
+    print(f"Running Grid Trading Backtest (Grids: {args.grids}, Range: {args.range_pct*100}%, Type: {args.grid_type})...")
+    strategy = GridTradingStrategy(num_grids=args.grids, grid_range_pct=args.range_pct, grid_type=args.grid_type)
     results = strategy.backtest(df)
 
     if not results:

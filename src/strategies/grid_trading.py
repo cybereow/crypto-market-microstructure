@@ -2,12 +2,13 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic"):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
         self.fee_pct = fee_pct
         self.slippage_pct = slippage_pct
+        self.grid_type = grid_type
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -23,7 +24,10 @@ class GridTradingStrategy:
         upper_bound = start_price * (1 + self.grid_range_pct/2)
 
         # Create grid levels
-        grid_levels = np.linspace(lower_bound, upper_bound, self.num_grids)
+        if self.grid_type == "geometric":
+            grid_levels = np.geomspace(lower_bound, upper_bound, self.num_grids)
+        else:
+            grid_levels = np.linspace(lower_bound, upper_bound, self.num_grids)
 
         # Assume we allocate 50% capital to quote asset (cash), 50% to base asset (inventory)
         cash = self.initial_capital / 2.0
