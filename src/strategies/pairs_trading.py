@@ -25,7 +25,7 @@ class PairsTradingStrategy:
         wt = delta / (1 - delta) * np.eye(2) # Process noise covariance
         vt = 1e-3 # Measurement noise variance
         theta = np.zeros((2, 1)) # State vector [alpha, beta]
-        P = np.zeros((2, 2)) # State covariance matrix
+        P = np.eye(2) * 1000 # State covariance matrix (High initial uncertainty for fast convergence)
         R = None # Expected variance of measurement
 
         betas = np.zeros(len(df))
@@ -63,10 +63,9 @@ class PairsTradingStrategy:
 
         df['beta'] = betas
 
-        # We use a rolling mean for beta to smooth the rapid updates of the Kalman Filter slightly
-        # This prevents overtrading from noise
-        df['beta_smoothed'] = df['beta'].rolling(window=self.window).mean().bfill()
-        df['spread'] = df['S1'] - (df['beta_smoothed'] * df['S2'])
+        # We use the raw instantaneous Kalman beta to eliminate lag completely.
+        # This allows the strategy to react immediately to structural breaks.
+        df['spread'] = df['S1'] - (df['beta'] * df['S2'])
 
         rolling_spread_mean = df['spread'].rolling(window=self.window).mean()
         rolling_spread_std = df['spread'].rolling(window=self.window).std()
@@ -80,6 +79,7 @@ class PairsTradingStrategy:
         pos_s2 = np.zeros(len(zscores))
 
         current_pos = 0
+        stopped_out = False
 
         for i in range(len(zscores)):
             z = zscores[i]
@@ -88,15 +88,24 @@ class PairsTradingStrategy:
                 pos_s2[i] = 0
                 continue
 
-            # Stop-loss check
-            if abs(z) > self.z_stop_loss:
+            # State Machine for Stop-Loss
+            # If we are stopped out, we wait until z-score reverts to the mean (inside exit threshold)
+            if stopped_out:
+                if abs(z) < self.z_exit_threshold:
+                    stopped_out = False  # Reset state, ready to trade again
+                # While stopped out, we do not take any new positions
                 current_pos = 0
-            elif z > self.z_entry_threshold:
-                current_pos = -1
-            elif z < -self.z_entry_threshold:
-                current_pos = 1
-            elif abs(z) < self.z_exit_threshold:
-                current_pos = 0
+            else:
+                # Normal trading logic
+                if abs(z) > self.z_stop_loss:
+                    current_pos = 0
+                    stopped_out = True
+                elif z > self.z_entry_threshold:
+                    current_pos = -1
+                elif z < -self.z_entry_threshold:
+                    current_pos = 1
+                elif abs(z) < self.z_exit_threshold:
+                    current_pos = 0
 
             if current_pos == 1:
                 pos_s1[i] = 1

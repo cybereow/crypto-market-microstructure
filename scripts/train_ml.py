@@ -27,14 +27,23 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['MACDs_12_26_9'] = data['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
     data['MACDh_12_26_9'] = data['MACD_12_26_9'] - data['MACDs_12_26_9']
 
-    # 2. Momentum: RSI
+    # 2. Momentum: RSI (Daily and Weekly equivalents)
     delta = data['close'].diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
+
+    # Daily RSI (14 days)
     ema_up = up.ewm(com=13, adjust=False).mean()
     ema_down = down.ewm(com=13, adjust=False).mean()
     rs = ema_up / ema_down
     data['RSI_14'] = 100 - (100 / (1 + rs))
+
+    # "Weekly" RSI computed on daily data (~70 days)
+    # This acts as a Multi-Timeframe feature stacking
+    ema_up_w = up.ewm(com=69, adjust=False).mean()
+    ema_down_w = down.ewm(com=69, adjust=False).mean()
+    rs_w = ema_up_w / ema_down_w
+    data['RSI_70'] = 100 - (100 / (1 + rs_w))
 
     # 3. Volatility: ATR and Bollinger Bands
     high_low = data['high'] - data['low']
@@ -66,6 +75,10 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
         data['OBV'] = obv
         data['OBV_sma_20'] = obv.rolling(window=20).mean()
         data['OBV_dist'] = (obv - data['OBV_sma_20']) / (data['OBV_sma_20'].replace(0, 1e-9))
+
+        # Long-term Multi-Timeframe OBV trend
+        data['OBV_sma_70'] = obv.rolling(window=70).mean()
+        data['OBV_trend'] = (obv - data['OBV_sma_70']) / (data['OBV_sma_70'].replace(0, 1e-9))
 
     # Target: 1 if next day's return is positive, 0 otherwise
     data['target'] = (data['ret_1d'].shift(-1) > 0).astype(int)
