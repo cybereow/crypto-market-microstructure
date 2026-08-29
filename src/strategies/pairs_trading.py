@@ -2,9 +2,10 @@ import pandas as pd
 import numpy as np
 
 class PairsTradingStrategy:
-    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, window=30, fee_pct=0.001, slippage_pct=0.001):
+    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, z_stop_loss=4.0, window=30, fee_pct=0.001, slippage_pct=0.001):
         self.z_entry_threshold = z_entry_threshold
         self.z_exit_threshold = z_exit_threshold
+        self.z_stop_loss = z_stop_loss
         self.window = window
         self.fee_pct = fee_pct
         self.slippage_pct = slippage_pct
@@ -17,12 +18,53 @@ class PairsTradingStrategy:
         df = pd.concat([s1, s2], axis=1).dropna()
         df.columns = ['S1', 'S2']
 
-        # Correct Spread Calculation: S1 - (beta * S2)
-        # We calculate the rolling hedge ratio (beta) using rolling covariance / rolling variance
-        rolling_cov = df['S1'].rolling(window=self.window).cov(df['S2'])
-        rolling_var = df['S2'].rolling(window=self.window).var()
+        # State-Space Kalman Filter for dynamic Hedge Ratio (beta)
+        # We assume S1 = beta * S2 + error
+        # Beta is a random walk state
+        delta = 1e-5
+        wt = delta / (1 - delta) * np.eye(2) # Process noise covariance
+        vt = 1e-3 # Measurement noise variance
+        theta = np.zeros((2, 1)) # State vector [alpha, beta]
+        P = np.eye(2) * 1000 # State covariance matrix (High initial uncertainty for fast convergence)
+        R = None # Expected variance of measurement
 
-        df['beta'] = rolling_cov / rolling_var
+        betas = np.zeros(len(df))
+
+        S1_vals = df['S1'].values
+        S2_vals = df['S2'].values
+
+        for i in range(len(df)):
+            x = np.array([[1], [S2_vals[i]]])
+            y = S1_vals[i]
+
+            # Predict
+            # theta(t|t-1) = theta(t-1|t-1)
+            R = P + wt
+
+            # Measurement prediction
+            yhat = x.T.dot(theta)[0, 0]
+
+            # Measurement variance
+            Q = x.T.dot(R).dot(x)[0, 0] + vt
+
+            # Error
+            e = y - yhat
+
+            # Kalman gain
+            K = R.dot(x) / Q
+
+            # Update state
+            theta = theta + K * e
+
+            # Update covariance
+            P = R - K.dot(x.T).dot(R)
+
+            betas[i] = theta[1, 0]
+
+        df['beta'] = betas
+
+        # We use the raw instantaneous Kalman beta to eliminate lag completely.
+        # This allows the strategy to react immediately to structural breaks.
         df['spread'] = df['S1'] - (df['beta'] * df['S2'])
 
         rolling_spread_mean = df['spread'].rolling(window=self.window).mean()
@@ -37,6 +79,7 @@ class PairsTradingStrategy:
         pos_s2 = np.zeros(len(zscores))
 
         current_pos = 0
+        stopped_out = False
 
         for i in range(len(zscores)):
             z = zscores[i]
@@ -45,12 +88,26 @@ class PairsTradingStrategy:
                 pos_s2[i] = 0
                 continue
 
-            if z > self.z_entry_threshold:
-                current_pos = -1
-            elif z < -self.z_entry_threshold:
-                current_pos = 1
-            elif abs(z) < self.z_exit_threshold:
-                current_pos = 0
+            # State Machine for Stop-Loss
+            # If we are stopped out, we wait until z-score reverts to the mean (inside exit threshold)
+            if stopped_out:
+                if abs(z) < self.z_exit_threshold:
+                    stopped_out = False  # Reset state, ready to trade again
+                else:
+                    # While stopped out, we do not take any new positions
+                    current_pos = 0
+
+            if not stopped_out:
+                # Normal trading logic
+                if abs(z) > self.z_stop_loss:
+                    current_pos = 0
+                    stopped_out = True
+                elif z > self.z_entry_threshold:
+                    current_pos = -1
+                elif z < -self.z_entry_threshold:
+                    current_pos = 1
+                elif abs(z) < self.z_exit_threshold:
+                    current_pos = 0
 
             if current_pos == 1:
                 pos_s1[i] = 1
