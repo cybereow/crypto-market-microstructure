@@ -2,10 +2,11 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
+        self.fee_pct = fee_pct
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -39,8 +40,8 @@ class GridTradingStrategy:
         equity_curve = []
 
         # Track which grid levels are active to prevent multiple triggers
-        # 1 means we hold the inventory bought at this level, 0 means we have cash waiting to buy
-        grid_status = {level: (1 if level >= start_price else 0) for level in grid_levels}
+        # Stores the amount bought at this level, 0 means we have cash waiting to buy
+        grid_status = {level: ((trade_amount_quote / start_price) if level >= start_price else 0) for level in grid_levels}
 
         for index, row in df.iterrows():
             current_price = row['close']
@@ -51,18 +52,21 @@ class GridTradingStrategy:
                     # Buy
                     if cash >= trade_amount_quote:
                         amount_bought = trade_amount_quote / current_price
-                        cash -= trade_amount_quote
+                        fee = trade_amount_quote * self.fee_pct
+                        cash -= (trade_amount_quote + fee)
                         inventory += amount_bought
-                        grid_status[level] = 1 # Mark as bought
+                        grid_status[level] = amount_bought # Mark as bought and store amount
                         trades.append({'time': index, 'type': 'buy', 'price': current_price, 'amount': amount_bought})
 
             # Check for sells (price rose above a grid level we are currently holding)
             for level in reversed(grid_levels):
-                if current_price > level and grid_status[level] == 1:
+                if current_price > level and grid_status[level] > 0:
                     # Sell
-                    amount_to_sell = trade_amount_quote / level # Simplify: sell the nominal amount allocated
+                    amount_to_sell = grid_status[level] # Sell exactly what we bought at this level
                     if inventory >= amount_to_sell:
-                        cash += amount_to_sell * current_price
+                        trade_value = amount_to_sell * current_price
+                        fee = trade_value * self.fee_pct
+                        cash += (trade_value - fee)
                         inventory -= amount_to_sell
                         grid_status[level] = 0 # Mark as sold (ready to buy again)
                         trades.append({'time': index, 'type': 'sell', 'price': current_price, 'amount': amount_to_sell})

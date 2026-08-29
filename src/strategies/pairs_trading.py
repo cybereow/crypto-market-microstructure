@@ -1,12 +1,12 @@
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
 
 class PairsTradingStrategy:
-    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, window=30):
+    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, window=30, fee_pct=0.001):
         self.z_entry_threshold = z_entry_threshold
         self.z_exit_threshold = z_exit_threshold
         self.window = window
+        self.fee_pct = fee_pct
 
     def generate_signals(self, s1: pd.Series, s2: pd.Series) -> pd.DataFrame:
         """
@@ -78,10 +78,18 @@ class PairsTradingStrategy:
         """
         Calculates strategy returns given the price and position dataframe.
         """
+        df = df.copy()
         df['ret_s1'] = df['S1'].pct_change()
         df['ret_s2'] = df['S2'].pct_change()
 
-        df['strat_ret'] = (df['position_s1'] * df['ret_s1']) + (df['position_s2'] * df['ret_s2'])
+        # Calculate when trades happen
+        df['trade_s1'] = df['position_s1'].diff().fillna(0).abs()
+        df['trade_s2'] = df['position_s2'].diff().fillna(0).abs()
+
+        gross_ret = (df['position_s1'] * df['ret_s1']) + (df['position_s2'] * df['ret_s2'])
+        fees = (df['trade_s1'] * self.fee_pct) + (df['trade_s2'] * self.fee_pct)
+
+        df['strat_ret'] = gross_ret - fees
         df['cum_ret'] = (1 + df['strat_ret']).cumprod()
 
         return df

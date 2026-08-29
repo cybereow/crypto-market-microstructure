@@ -48,11 +48,17 @@ def main():
         sys.exit(1)
 
     prices = {}
+    import re
     for f in csv_files:
         try:
-            # Assuming filename format: exchange_SYMBOL_timeframe.csv
+            # Assuming filename format: exchange_BASE_QUOTE_timeframe.csv
             basename = os.path.basename(f)
-            symbol = basename.split("_")[1] + "/" + basename.split("_")[2].replace(".csv", "")
+            match = re.search(r'_([A-Z0-9]+)_([A-Z0-9]+)_', basename)
+            if match:
+                symbol = f"{match.group(1)}/{match.group(2)}"
+            else:
+                # Fallback
+                symbol = basename.replace(".csv", "")
 
             df = pd.read_csv(f, index_col='timestamp', parse_dates=True)
             # We use 'close' prices for cointegration testing
@@ -66,8 +72,13 @@ def main():
 
     prices_df = pd.DataFrame(prices)
 
-    print(f"Testing {len(prices_df.columns)} assets for cointegration...")
-    pairs = find_cointegrated_pairs(prices_df, args.p_value)
+    # To prevent lookahead bias, we must only search for cointegration on the In-Sample data
+    # (e.g., the first 80%). The backtest will run on the Out-of-Sample (last 20%).
+    split_idx = int(len(prices_df) * 0.8)
+    in_sample_df = prices_df.iloc[:split_idx]
+
+    print(f"Testing {len(in_sample_df.columns)} assets for cointegration on In-Sample data (first {split_idx} rows)...")
+    pairs = find_cointegrated_pairs(in_sample_df, args.p_value)
 
     if pairs:
         print(f"Found {len(pairs)} cointegrated pair(s):")

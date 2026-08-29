@@ -1,12 +1,11 @@
 import argparse
 import os
 import sys
-import pickle
 
 import pandas as pd
 import pandas_ta as ta
 from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, classification_report
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -51,7 +50,7 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 def main():
     parser = argparse.ArgumentParser(description="Train XGBoost model for price direction prediction.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
-    parser.add_argument("--model-out", type=str, default="ml_model.pkl", help="Filename to save the trained model")
+    parser.add_argument("--model-out", type=str, default="ml_model.json", help="Filename to save the trained model")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -72,12 +71,15 @@ def main():
     X = df_features[features]
     y = df_features['target']
 
-    # Time-series split (no shuffling to prevent data leakage)
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    # Walk-Forward Validation using TimeSeriesSplit on the first 80% of data (In-Sample)
+    # The last 20% is strictly held out for backtesting (Out-of-Sample)
+    train_size = int(len(X) * 0.8)
+    X_train_full = X.iloc[:train_size]
+    y_train_full = y.iloc[:train_size]
 
-    print(f"Training XGBoost Classifier on {len(X_train)} samples with {len(features)} features...")
+    tscv = TimeSeriesSplit(n_splits=5)
+    fold = 1
+
     model = XGBClassifier(
         n_estimators=200,
         max_depth=3,
@@ -85,18 +87,23 @@ def main():
         random_state=42,
         eval_metric='logloss'
     )
-    model.fit(X_train, y_train)
 
-    print("Evaluating model...")
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f"Test Accuracy: {accuracy:.2%}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
+    print(f"Running 5-fold Time-Series Cross Validation on {len(X_train_full)} samples...")
+    for train_index, test_index in tscv.split(X_train_full):
+        X_train_cv, X_test_cv = X_train_full.iloc[train_index], X_train_full.iloc[test_index]
+        y_train_cv, y_test_cv = y_train_full.iloc[train_index], y_train_full.iloc[test_index]
+
+        model.fit(X_train_cv, y_train_cv)
+        preds = model.predict(X_test_cv)
+        acc = accuracy_score(y_test_cv, preds)
+        print(f"  Fold {fold} - Test Size: {len(X_test_cv)} | Accuracy: {acc:.2%}")
+        fold += 1
+
+    print("\nTraining final model on full In-Sample data...")
+    model.fit(X_train_full, y_train_full)
 
     model_path = os.path.join(OUTPUT_DIR, args.model_out)
-    with open(model_path, 'wb') as f:
-        pickle.dump(model, f)
+    model.save_model(model_path)
     print(f"Model saved to {model_path}")
 
 if __name__ == "__main__":

@@ -4,3 +4,6 @@ __pycache__/
 data/*.db
 research/*/output/
 .env
+data/*.csv
+data/*.pkl
+data/*.json

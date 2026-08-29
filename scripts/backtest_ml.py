@@ -1,9 +1,9 @@
 import argparse
 import os
 import sys
-import pickle
-
+import numpy as np
 import pandas as pd
+from xgboost import XGBClassifier
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
@@ -13,7 +13,7 @@ from src.strategies.ml_strategy import MLTradingStrategy
 def main():
     parser = argparse.ArgumentParser(description="Backtest ML Trading Strategy.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
-    parser.add_argument("--model", type=str, default="ml_model.pkl", help="Filename of the trained model")
+    parser.add_argument("--model", type=str, default="ml_model.json", help="Filename of the trained model")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -40,14 +40,14 @@ def main():
     X = df_features[features]
 
     print(f"Loading XGBoost model from {args.model}...")
-    with open(model_path, 'rb') as f:
-        model = pickle.load(f)
+    model = XGBClassifier()
+    model.load_model(model_path)
 
     strategy = MLTradingStrategy(model)
     signals = strategy.generate_signals(X)
     results = strategy.calculate_returns(df_features, signals)
 
-    # We evaluate on the out-of-sample data (last 20%) to be realistic
+    # The model was trained on the first 80%, so we strictly evaluate on the last 20% (Out-of-Sample)
     split_idx = int(len(results) * 0.8)
     oos_results = results.iloc[split_idx:].copy()
 
@@ -59,11 +59,20 @@ def main():
 
     win_rate = (oos_results['strat_ret'] > 0).sum() / (oos_results['strat_ret'] != 0).sum() if (oos_results['strat_ret'] != 0).sum() > 0 else 0
 
+    # Calculate Risk Metrics
+    daily_rf = 0.0
+    sharpe = np.sqrt(365) * (oos_results['strat_ret'].mean() - daily_rf) / (oos_results['strat_ret'].std() + 1e-9)
+    roll_max = oos_results['cum_ret'].cummax()
+    drawdown = oos_results['cum_ret'] / roll_max - 1.0
+    max_dd = drawdown.min()
+
     print("-" * 40)
-    print("Out-of-Sample Results:")
+    print("Out-of-Sample Results (with 0.1% fees):")
     print(f"Strategy Return: {total_return:.2%}")
     print(f"Buy & Hold Return: {buy_hold_return:.2%}")
     print(f"Win Rate (on active trades): {win_rate:.2%}")
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Max Drawdown: {max_dd:.2%}")
     print("-" * 40)
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,11 +31,20 @@ def main():
         print("Backtest returned no results.")
         return
 
+    df_result = results['equity_curve']
+    daily_rf = 0.0
+    sharpe = np.sqrt(365) * (df_result['return'].mean() - daily_rf) / (df_result['return'].std() + 1e-9)
+    roll_max = df_result['equity'].cummax()
+    drawdown = df_result['equity'] / roll_max - 1.0
+    max_dd = drawdown.min()
+
     print("-" * 40)
-    print("Grid Trading Results:")
+    print("Grid Trading Results (with 0.1% fees):")
     print(f"Total Return: {results['total_return']:.2%}")
     print(f"Buy & Hold Return: {results['buy_hold_return']:.2%}")
     print(f"Number of Trades: {results['num_trades']}")
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Max Drawdown: {max_dd:.2%}")
     print("-" * 40)
 
 if __name__ == "__main__":
