@@ -27,14 +27,23 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['MACDs_12_26_9'] = data['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
     data['MACDh_12_26_9'] = data['MACD_12_26_9'] - data['MACDs_12_26_9']
 
-    # 2. Momentum: RSI
+    # 2. Momentum: RSI (Daily and Weekly equivalents)
     delta = data['close'].diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
+
+    # Daily RSI (14 days)
     ema_up = up.ewm(com=13, adjust=False).mean()
     ema_down = down.ewm(com=13, adjust=False).mean()
-    rs = ema_up / ema_down
+    rs = ema_up / (ema_down + 1e-9)
     data['RSI_14'] = 100 - (100 / (1 + rs))
+
+    # "Weekly" RSI computed on daily data (~70 days)
+    # This acts as a Multi-Timeframe feature stacking
+    ema_up_w = up.ewm(com=69, adjust=False).mean()
+    ema_down_w = down.ewm(com=69, adjust=False).mean()
+    rs_w = ema_up_w / (ema_down_w + 1e-9)
+    data['RSI_70'] = 100 - (100 / (1 + rs_w))
 
     # 3. Volatility: ATR and Bollinger Bands
     high_low = data['high'] - data['low']
@@ -55,6 +64,41 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['sma_50'] = data['close'].rolling(window=50).mean()
     data['sma_dist'] = data['sma_10'] / data['sma_50'] - 1
 
+    # Volume and Momentum Features
+    if 'volume' in data.columns:
+        # Volume SMA
+        data['vol_sma_20'] = data['volume'].rolling(window=20).mean()
+        data['vol_ratio'] = data['volume'] / (data['vol_sma_20'] + 1e-9)
+
+        # On-Balance Volume (OBV)
+        obv = (np.sign(data['close'].diff()) * data['volume']).fillna(0).cumsum()
+        data['OBV'] = obv
+        data['OBV_sma_20'] = obv.rolling(window=20).mean()
+        data['OBV_dist'] = (obv - data['OBV_sma_20']) / (data['OBV_sma_20'].replace(0, 1e-9))
+
+        # Long-term Multi-Timeframe OBV trend
+        data['OBV_sma_70'] = obv.rolling(window=70).mean()
+        data['OBV_trend'] = (obv - data['OBV_sma_70']) / (data['OBV_sma_70'].replace(0, 1e-9))
+
+    # Funding Rate Sentiment (Crowd leverage)
+    if 'funding_rate' in data.columns:
+        # High positive funding means extreme long sentiment (historically mean-reverts down)
+        data['funding_rate_raw'] = data['funding_rate']
+        # Momentum of funding rate change
+        data['funding_rate_diff'] = data['funding_rate'].diff()
+        # Smoothed funding rate
+        data['funding_sma_5'] = data['funding_rate'].rolling(window=5).mean()
+
+    # L2 Order Book Imbalance (Microstructure)
+    if 'obi' in data.columns:
+        data['obi_raw'] = data['obi']
+        # Distance from balanced (0.5)
+        data['obi_imbalance'] = data['obi'] - 0.5
+        # Momentum of OBI
+        data['obi_diff'] = data['obi'].diff()
+        # Smoothed OBI to capture longer intraday/daily sentiment states
+        data['obi_sma_5'] = data['obi'].rolling(window=5).mean()
+
     # Target: 1 if next day's return is positive, 0 otherwise
     data['target'] = (data['ret_1d'].shift(-1) > 0).astype(int)
 
@@ -69,6 +113,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train XGBoost model for price direction prediction.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
     parser.add_argument("--model-out", type=str, default="ml_model.json", help="Filename to save the trained model")
+    parser.add_argument("--l2-obi-data", type=str, default=None, help="Optional: Filename of the L2 OBI CSV to merge as features (e.g. binance_l2obi_BTCUSDT_1d.csv)")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -78,6 +123,17 @@ def main():
 
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
+
+    if args.l2_obi_data:
+        obi_path = os.path.join(OUTPUT_DIR, args.l2_obi_data)
+        if os.path.exists(obi_path):
+            print(f"Merging L2 OBI data from {args.l2_obi_data}...")
+            obi_df = pd.read_csv(obi_path, index_col='timestamp', parse_dates=True)
+            df = df.join(obi_df, how='left')
+            # Forward fill OBI in case of missing periods
+            df['obi'] = df['obi'].ffill().fillna(0.5) # Default to balanced orderbook
+        else:
+            print(f"Warning: L2 OBI data file {obi_path} does not exist. Skipping OBI features.")
 
     print("Creating advanced features...")
     df_features = create_features(df)
