@@ -80,6 +80,15 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
         data['OBV_sma_70'] = obv.rolling(window=70).mean()
         data['OBV_trend'] = (obv - data['OBV_sma_70']) / (data['OBV_sma_70'].replace(0, 1e-9))
 
+    # Funding Rate Sentiment (Crowd leverage)
+    if 'funding_rate' in data.columns:
+        # High positive funding means extreme long sentiment (historically mean-reverts down)
+        data['funding_rate_raw'] = data['funding_rate']
+        # Momentum of funding rate change
+        data['funding_rate_diff'] = data['funding_rate'].diff()
+        # Smoothed funding rate
+        data['funding_sma_5'] = data['funding_rate'].rolling(window=5).mean()
+
     # Target: 1 if next day's return is positive, 0 otherwise
     data['target'] = (data['ret_1d'].shift(-1) > 0).astype(int)
 
