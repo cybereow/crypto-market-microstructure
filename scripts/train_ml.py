@@ -89,6 +89,16 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
         # Smoothed funding rate
         data['funding_sma_5'] = data['funding_rate'].rolling(window=5).mean()
 
+    # L2 Order Book Imbalance (Microstructure)
+    if 'obi' in data.columns:
+        data['obi_raw'] = data['obi']
+        # Distance from balanced (0.5)
+        data['obi_imbalance'] = data['obi'] - 0.5
+        # Momentum of OBI
+        data['obi_diff'] = data['obi'].diff()
+        # Smoothed OBI to capture longer intraday/daily sentiment states
+        data['obi_sma_5'] = data['obi'].rolling(window=5).mean()
+
     # Target: 1 if next day's return is positive, 0 otherwise
     data['target'] = (data['ret_1d'].shift(-1) > 0).astype(int)
 
@@ -103,6 +113,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train XGBoost model for price direction prediction.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
     parser.add_argument("--model-out", type=str, default="ml_model.json", help="Filename to save the trained model")
+    parser.add_argument("--l2-obi-data", type=str, default=None, help="Optional: Filename of the L2 OBI CSV to merge as features (e.g. binance_l2obi_BTCUSDT_1d.csv)")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -112,6 +123,17 @@ def main():
 
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
+
+    if args.l2_obi_data:
+        obi_path = os.path.join(OUTPUT_DIR, args.l2_obi_data)
+        if os.path.exists(obi_path):
+            print(f"Merging L2 OBI data from {args.l2_obi_data}...")
+            obi_df = pd.read_csv(obi_path, index_col='timestamp', parse_dates=True)
+            df = df.join(obi_df, how='left')
+            # Forward fill OBI in case of missing periods
+            df['obi'] = df['obi'].ffill().fillna(0.5) # Default to balanced orderbook
+        else:
+            print(f"Warning: L2 OBI data file {obi_path} does not exist. Skipping OBI features.")
 
     print("Creating advanced features...")
     df_features = create_features(df)
