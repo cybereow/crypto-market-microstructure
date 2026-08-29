@@ -93,9 +93,13 @@ class PairsTradingStrategy:
             if stopped_out:
                 if abs(z) < self.z_exit_threshold:
                     stopped_out = False  # Reset state, ready to trade again
-                # While stopped out, we do not take any new positions
-                current_pos = 0
-            else:
+                else:
+                    # Still stopped out, do not take positions
+                    current_pos = 0
+
+            # Use 'if not stopped_out:' instead of 'else:' so we can evaluate entry conditions
+            # on the exact same bar that stopped_out becomes False
+            if not stopped_out:
                 # Normal trading logic
                 if abs(z) > self.z_stop_loss:
                     current_pos = 0

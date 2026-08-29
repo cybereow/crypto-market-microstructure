@@ -52,7 +52,7 @@ def main():
     plus_di = 100 * (plus_dm / atr)
     minus_di = 100 * (minus_dm / atr)
 
-    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
     adx = dx.ewm(alpha=1/14, adjust=False).mean()
 
     # Define Regime: 1 = Trending (ML), 0 = Ranging (Grid)
@@ -90,6 +90,9 @@ def main():
     regime_aligned = regime.loc[common_idx]
 
     # Align Returns
+    if 'ret_1d' not in df_combined.columns:
+        df_combined['ret_1d'] = df_combined['close'].pct_change()
+
     ml_returns_df = ml_strategy.calculate_returns(df_combined, ml_signals.loc[common_idx])
     ml_strat_returns = ml_returns_df['strat_ret']
 

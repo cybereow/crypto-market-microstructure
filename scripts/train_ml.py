@@ -35,14 +35,14 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     # Daily RSI (14 days)
     ema_up = up.ewm(com=13, adjust=False).mean()
     ema_down = down.ewm(com=13, adjust=False).mean()
-    rs = ema_up / ema_down
+    rs = ema_up / (ema_down + 1e-9)
     data['RSI_14'] = 100 - (100 / (1 + rs))
 
     # "Weekly" RSI computed on daily data (~70 days)
     # This acts as a Multi-Timeframe feature stacking
     ema_up_w = up.ewm(com=69, adjust=False).mean()
     ema_down_w = down.ewm(com=69, adjust=False).mean()
-    rs_w = ema_up_w / ema_down_w
+    rs_w = ema_up_w / (ema_down_w + 1e-9)
     data['RSI_70'] = 100 - (100 / (1 + rs_w))
 
     # 3. Volatility: ATR and Bollinger Bands

@@ -10,31 +10,25 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 
-def process_bookticker_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
-    """Calculate Order Book Imbalance (OBI) for a chunk of bookTicker data."""
-    # Binance bookTicker format typically: update_id, best_bid_price, best_bid_qty, best_ask_price, best_ask_qty, transaction_time, event_time
-    # Since headers might vary or be missing, we ensure we have transaction_time and quantities
+import tempfile
 
-    # Try to map columns if standard headers exist, otherwise use indices
-    # UM Futures bookTicker CSV standard:
-    # update_id, best_bid_price, best_bid_qty, best_ask_price, best_ask_qty, transaction_time, event_time
+def process_bookticker_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
+    """Extract bid/ask quantities for a chunk of bookTicker data."""
     if len(chunk.columns) >= 7:
         if 'best_bid_qty' not in chunk.columns:
             # Assume no header, map manually
             chunk.columns = ['update_id', 'best_bid_price', 'best_bid_qty', 'best_ask_price', 'best_ask_qty', 'transaction_time', 'event_time'] + list(chunk.columns[7:])
 
-    # Calculate OBI: Bid Qty / (Bid Qty + Ask Qty)
-    # 0.5 is balanced. > 0.5 is bid-heavy (bullish). < 0.5 is ask-heavy (bearish).
     bid_qty = chunk['best_bid_qty'].astype(float)
     ask_qty = chunk['best_ask_qty'].astype(float)
 
-    chunk['obi'] = bid_qty / (bid_qty + ask_qty + 1e-9)
+    chunk['bid_qty'] = bid_qty
+    chunk['ask_qty'] = ask_qty
 
-    # Convert time to datetime
     time_col = 'transaction_time' if 'transaction_time' in chunk.columns else chunk.columns[5]
     chunk['timestamp'] = pd.to_datetime(chunk[time_col], unit='ms')
 
-    return chunk[['timestamp', 'obi']]
+    return chunk[['timestamp', 'bid_qty', 'ask_qty']]
 
 def download_and_process_l2(symbol: str, date: str, timeframe: str = '1d') -> pd.DataFrame:
     """Download daily bookTicker ZIP from Binance Vision, process in chunks, and return aggregated OBI."""
@@ -51,38 +45,51 @@ def download_and_process_l2(symbol: str, date: str, timeframe: str = '1d') -> pd
 
     print("Download successful. Processing ZIP stream in chunks to save RAM...")
 
-    # Read zip file from memory
+    # Save stream to temporary file to prevent loading full ZIP into RAM (OOM fix)
+    temp_zip_fd, temp_zip_path = tempfile.mkstemp(suffix='.zip')
+    with os.fdopen(temp_zip_fd, 'wb') as f:
+        for zip_chunk in response.iter_content(chunk_size=1024*1024): # 1MB chunks
+            if zip_chunk:
+                f.write(zip_chunk)
+
     aggregated_chunks = []
-    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-        csv_filename = f"{file_name}.csv"
-        if csv_filename not in z.namelist():
-            csv_filename = z.namelist()[0] # Fallback to first file
 
-        with z.open(csv_filename) as f:
-            # Process in chunks of 100,000 rows
-            chunk_iter = pd.read_csv(f, chunksize=100000, low_memory=False)
-            for i, chunk in enumerate(chunk_iter):
-                processed = process_bookticker_chunk(chunk)
+    try:
+        with zipfile.ZipFile(temp_zip_path) as z:
+            csv_filename = f"{file_name}.csv"
+            if csv_filename not in z.namelist():
+                csv_filename = z.namelist()[0]
 
-                # Resample chunk to the target timeframe to compress memory immediately
-                processed.set_index('timestamp', inplace=True)
+            with z.open(csv_filename) as f:
+                chunk_iter = pd.read_csv(f, chunksize=100000, low_memory=False)
+                for i, chunk in enumerate(chunk_iter):
+                    processed = process_bookticker_chunk(chunk)
+                    processed.set_index('timestamp', inplace=True)
 
-                # Pandas resample rule mapping
-                rule_map = {'1d': 'D', '1h': 'h', '15m': '15min', '5m': '5min', '1m': '1min'}
-                rule = rule_map.get(timeframe, 'D')
+                    rule_map = {'1d': 'D', '1h': 'h', '15m': '15min', '5m': '5min', '1m': '1min'}
+                    rule = rule_map.get(timeframe, 'D')
 
-                resampled = processed.resample(rule).mean()
-                aggregated_chunks.append(resampled)
+                    # Sum quantities instead of averaging OBI to prevent Mean-of-Means bias
+                    resampled = processed.resample(rule).sum()
+                    aggregated_chunks.append(resampled)
 
-                if i % 10 == 0 and i > 0:
-                    print(f"  Processed {i * 100000} tick events...")
+                    if i % 10 == 0 and i > 0:
+                        print(f"  Processed {i * 100000} tick events...")
+    finally:
+        os.remove(temp_zip_path)
 
     print("Finalizing aggregation...")
-    # Combine all resampled chunks and group by index to get the true mean per timeframe
-    final_df = pd.concat(aggregated_chunks)
-    final_df = final_df.groupby(final_df.index).mean()
+    if not aggregated_chunks:
+        return pd.DataFrame()
 
-    return final_df
+    # Combine all chunk sums and add them together by index
+    final_sums = pd.concat(aggregated_chunks)
+    final_sums = final_sums.groupby(final_sums.index).sum()
+
+    # Calculate the true mathematical OBI for the final timeframe
+    final_sums['obi'] = final_sums['bid_qty'] / (final_sums['bid_qty'] + final_sums['ask_qty'] + 1e-9)
+
+    return final_sums[['obi']]
 
 def main():
     parser = argparse.ArgumentParser(description="Download and process Binance L2 BookTicker Data for OBI.")
