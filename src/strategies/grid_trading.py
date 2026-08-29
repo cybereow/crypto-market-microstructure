@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0, recenter_cooldown=0):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
@@ -11,6 +11,7 @@ class GridTradingStrategy:
         self.grid_type = grid_type
         self.adaptive_atr_period = adaptive_atr_period
         self.atr_multiplier = atr_multiplier
+        self.recenter_cooldown = recenter_cooldown
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -103,6 +104,8 @@ class GridTradingStrategy:
         prev_closes = np.roll(closes, 1)
         prev_closes[0] = start_price
 
+        last_recenter_idx = -self.recenter_cooldown - 1
+
         for i in range(len(closes)):
             h = highs[i]
             l = lows[i]
@@ -139,7 +142,8 @@ class GridTradingStrategy:
                         trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
 
             # Re-center logic AFTER grid trades to correctly capture intra-bar action
-            if c > upper_bound or c < lower_bound:
+            if (c > upper_bound or c < lower_bound) and (i - last_recenter_idx) >= self.recenter_cooldown:
+                last_recenter_idx = i
                 # Rebalance portfolio to 50/50
                 equity = cash + (inventory * c)
                 # target cash and inventory based on total equity
