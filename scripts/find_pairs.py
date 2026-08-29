@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import glob
+import re
 
 import pandas as pd
 import numpy as np
@@ -48,7 +49,6 @@ def main():
         sys.exit(1)
 
     prices = {}
-    import re
     for f in csv_files:
         try:
             # Assuming filename format: exchange_BASE_QUOTE_timeframe.csv

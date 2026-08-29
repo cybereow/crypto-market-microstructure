@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 
 class PairsTradingStrategy:
-    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, window=30, fee_pct=0.001):
+    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, window=30, fee_pct=0.001, slippage_pct=0.001):
         self.z_entry_threshold = z_entry_threshold
         self.z_exit_threshold = z_exit_threshold
         self.window = window
         self.fee_pct = fee_pct
+        self.slippage_pct = slippage_pct
 
     def generate_signals(self, s1: pd.Series, s2: pd.Series) -> pd.DataFrame:
         """
@@ -16,16 +17,19 @@ class PairsTradingStrategy:
         df = pd.concat([s1, s2], axis=1).dropna()
         df.columns = ['S1', 'S2']
 
-        # Calculate hedge ratio using rolling OLS
-        # In practice, rolling OLS can be slow, for simplicity we use a rolling ratio or a static OLS over the window
-        # For this implementation, we calculate rolling spread = S1 - (beta * S2) where beta is rolling mean of S1/S2
-        # A more rigorous approach uses rolling OLS, but rolling ratio is faster for simple backtests.
-        df['ratio'] = df['S1'] / df['S2']
-        rolling_mean = df['ratio'].rolling(window=self.window).mean()
-        rolling_std = df['ratio'].rolling(window=self.window).std()
+        # Correct Spread Calculation: S1 - (beta * S2)
+        # We calculate the rolling hedge ratio (beta) using rolling covariance / rolling variance
+        rolling_cov = df['S1'].rolling(window=self.window).cov(df['S2'])
+        rolling_var = df['S2'].rolling(window=self.window).var()
 
-        # Z-score of the ratio
-        df['zscore'] = (df['ratio'] - rolling_mean) / rolling_std
+        df['beta'] = rolling_cov / rolling_var
+        df['spread'] = df['S1'] - (df['beta'] * df['S2'])
+
+        rolling_spread_mean = df['spread'].rolling(window=self.window).mean()
+        rolling_spread_std = df['spread'].rolling(window=self.window).std()
+
+        # Z-score of the spread
+        df['zscore'] = (df['spread'] - rolling_spread_mean) / rolling_spread_std
 
         # Signals
         df['position_s1'] = 0
@@ -86,10 +90,14 @@ class PairsTradingStrategy:
         df['trade_s1'] = df['position_s1'].diff().fillna(0).abs()
         df['trade_s2'] = df['position_s2'].diff().fillna(0).abs()
 
-        gross_ret = (df['position_s1'] * df['ret_s1']) + (df['position_s2'] * df['ret_s2'])
-        fees = (df['trade_s1'] * self.fee_pct) + (df['trade_s2'] * self.fee_pct)
+        # Apply fees and slippage on trades
+        # Both fee and slippage reduce our net return whenever we flip positions
+        cost_per_trade = self.fee_pct + self.slippage_pct
 
-        df['strat_ret'] = gross_ret - fees
+        gross_ret = (df['position_s1'] * df['ret_s1']) + (df['position_s2'] * df['ret_s2'])
+        costs = (df['trade_s1'] * cost_per_trade) + (df['trade_s2'] * cost_per_trade)
+
+        df['strat_ret'] = gross_ret - costs
         df['cum_ret'] = (1 + df['strat_ret']).cumprod()
 
         return df

@@ -5,7 +5,7 @@ import sys
 import pandas as pd
 import pandas_ta as ta
 from xgboost import XGBClassifier
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
 from sklearn.metrics import accuracy_score, classification_report
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -45,6 +45,8 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     # Drop rows with NaN due to rolling windows and shift
     data.dropna(inplace=True)
 
+    # Remove 'ret_1d' from features to prevent noise/overfitting (today's return rarely predicts tomorrow's direction)
+    # We keep it in the dataframe to construct targets and backtest, but exclude it later
     return data
 
 def main():
@@ -64,8 +66,8 @@ def main():
     print("Creating advanced features with pandas-ta...")
     df_features = create_features(df)
 
-    # Extract all created features (excluding price data and target)
-    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target']
+    # Extract all created features (excluding price data, current bar's return, and target)
+    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
     features = [col for col in df_features.columns if col not in exclude_cols]
 
     X = df_features[features]
@@ -78,29 +80,41 @@ def main():
     y_train_full = y.iloc[:train_size]
 
     tscv = TimeSeriesSplit(n_splits=5)
-    fold = 1
 
-    model = XGBClassifier(
-        n_estimators=200,
-        max_depth=3,
-        learning_rate=0.05,
+    base_model = XGBClassifier(random_state=42, eval_metric='logloss')
+
+    param_distributions = {
+        'max_depth': [3, 4, 5, 7],
+        'n_estimators': [50, 100, 200],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'subsample': [0.6, 0.8, 1.0],
+        'colsample_bytree': [0.6, 0.8, 1.0]
+    }
+
+    print(f"Running RandomizedSearchCV with TimeSeriesSplit on {len(X_train_full)} samples...")
+    search = RandomizedSearchCV(
+        base_model,
+        param_distributions=param_distributions,
+        n_iter=15,
+        scoring='accuracy',
+        cv=tscv,
         random_state=42,
-        eval_metric='logloss'
+        n_jobs=-1
     )
 
-    print(f"Running 5-fold Time-Series Cross Validation on {len(X_train_full)} samples...")
-    for train_index, test_index in tscv.split(X_train_full):
-        X_train_cv, X_test_cv = X_train_full.iloc[train_index], X_train_full.iloc[test_index]
-        y_train_cv, y_test_cv = y_train_full.iloc[train_index], y_train_full.iloc[test_index]
+    search.fit(X_train_full, y_train_full)
 
-        model.fit(X_train_cv, y_train_cv)
-        preds = model.predict(X_test_cv)
-        acc = accuracy_score(y_test_cv, preds)
-        print(f"  Fold {fold} - Test Size: {len(X_test_cv)} | Accuracy: {acc:.2%}")
-        fold += 1
+    print(f"\nBest params found: {search.best_params_}")
+    print(f"Best CV Accuracy: {search.best_score_:.2%}")
 
-    print("\nTraining final model on full In-Sample data...")
-    model.fit(X_train_full, y_train_full)
+    model = search.best_estimator_
+
+    # Feature Importance Logging
+    importance = model.feature_importances_
+    feat_imp = pd.DataFrame({'Feature': features, 'Importance': importance})
+    feat_imp = feat_imp.sort_values(by='Importance', ascending=False)
+    print("\nTop 5 Feature Importances:")
+    print(feat_imp.head(5).to_string(index=False))
 
     model_path = os.path.join(OUTPUT_DIR, args.model_out)
     model.save_model(model_path)

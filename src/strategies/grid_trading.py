@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
         self.fee_pct = fee_pct
+        self.slippage_pct = slippage_pct
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -39,39 +40,65 @@ class GridTradingStrategy:
         trades = []
         equity_curve = []
 
-        # Track which grid levels are active to prevent multiple triggers
-        # Stores the amount bought at this level, 0 means we have cash waiting to buy
-        grid_status = {level: ((trade_amount_quote / start_price) if level >= start_price else 0) for level in grid_levels}
+        # Phantom inventory fix:
+        # Base inventory should only cover levels below start_price, so when price drops, we buy.
+        # But wait, grid trading means we hold inventory for grids above the current price to sell.
+        # If a grid is ABOVE start_price, we ALREADY hold inventory to sell.
+        # If a grid is BELOW start_price, we hold CASH to buy.
+        grid_status = {}
+        for level in grid_levels:
+            if level >= start_price:
+                # We hold inventory to sell at this upper grid
+                amount_held = trade_amount_quote / level
+                grid_status[level] = amount_held
+            else:
+                # We hold cash, waiting for price to drop to this lower grid
+                grid_status[level] = 0
+
+        # Adjust starting inventory/cash based on the grid setup
+        total_inventory_needed = sum(v for v in grid_status.values())
+        cash = self.initial_capital - (total_inventory_needed * start_price)
+        inventory = total_inventory_needed
 
         for index, row in df.iterrows():
             current_price = row['close']
+            high = row['high']
+            low = row['low']
 
-            # Check for buys (price dropped below a grid level we haven't bought yet)
+            # Check for buys (price dropped to or below a grid level we haven't bought yet)
             for level in grid_levels:
-                if current_price < level and grid_status[level] == 0:
-                    # Buy
-                    if cash >= trade_amount_quote:
-                        amount_bought = trade_amount_quote / current_price
-                        fee = trade_amount_quote * self.fee_pct
-                        cash -= (trade_amount_quote + fee)
-                        inventory += amount_bought
-                        grid_status[level] = amount_bought # Mark as bought and store amount
-                        trades.append({'time': index, 'type': 'buy', 'price': current_price, 'amount': amount_bought})
+                if low <= level and grid_status[level] == 0:
+                    # Buy at limit price `level` (not close price)
+                    # Apply slippage (buy price is slightly higher)
+                    exec_price = level * (1 + self.slippage_pct)
+                    trade_value = trade_amount_quote
+                    fee = trade_value * self.fee_pct
 
-            # Check for sells (price rose above a grid level we are currently holding)
+                    if cash >= (trade_value + fee):
+                        amount_bought = trade_value / exec_price
+                        cash -= (trade_value + fee)
+                        inventory += amount_bought
+                        grid_status[level] = amount_bought
+                        trades.append({'time': index, 'type': 'buy', 'price': exec_price, 'amount': amount_bought})
+
+            # Check for sells (price rose to or above a grid level we are currently holding)
             for level in reversed(grid_levels):
-                if current_price > level and grid_status[level] > 0:
-                    # Sell
-                    amount_to_sell = grid_status[level] # Sell exactly what we bought at this level
-                    if inventory >= amount_to_sell:
-                        trade_value = amount_to_sell * current_price
+                if high >= level and grid_status[level] > 0:
+                    # Sell at limit price `level` (not close price)
+                    # Apply slippage (sell price is slightly lower)
+                    exec_price = level * (1 - self.slippage_pct)
+                    amount_to_sell = grid_status[level]
+
+                    # Prevent selling what we don't have due to float rounding
+                    if inventory >= amount_to_sell * 0.999:
+                        trade_value = amount_to_sell * exec_price
                         fee = trade_value * self.fee_pct
                         cash += (trade_value - fee)
                         inventory -= amount_to_sell
                         grid_status[level] = 0 # Mark as sold (ready to buy again)
-                        trades.append({'time': index, 'type': 'sell', 'price': current_price, 'amount': amount_to_sell})
+                        trades.append({'time': index, 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
 
-            # Record daily equity
+            # Record daily equity at close price
             equity = cash + (inventory * current_price)
             equity_curve.append(equity)
 

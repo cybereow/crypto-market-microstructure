@@ -1,9 +1,10 @@
 import pandas as pd
 
 class MLTradingStrategy:
-    def __init__(self, model, fee_pct=0.001):
+    def __init__(self, model, fee_pct=0.001, slippage_pct=0.001):
         self.model = model
         self.fee_pct = fee_pct
+        self.slippage_pct = slippage_pct
 
     def generate_signals(self, X: pd.DataFrame) -> pd.Series:
         """
@@ -30,8 +31,9 @@ class MLTradingStrategy:
         data['position'] = signals
         # Trade occurs when position changes
         data['trade'] = data['position'].diff().fillna(0).abs()
-        # Strategy return = position * asset return - (fee * trade)
-        data['strat_ret'] = (data['position'] * data['ret_1d']) - (data['trade'] * self.fee_pct)
+        # Strategy return = position * asset return - (fee + slippage) * trade
+        cost_per_trade = self.fee_pct + self.slippage_pct
+        data['strat_ret'] = (data['position'] * data['ret_1d']) - (data['trade'] * cost_per_trade)
         data['cum_ret'] = (1 + data['strat_ret']).cumprod()
 
         return data

@@ -24,7 +24,7 @@ def main():
         sys.exit(1)
 
     if not os.path.exists(model_path):
-        print(f"Error: Model file {model_path} does not exist. Train the model first.")
+        print(f"Error: Model file {model_path} does not exist. Train the model first using scripts/train_ml.py")
         sys.exit(1)
 
     print(f"Loading data from {args.data}...")
@@ -33,23 +33,27 @@ def main():
     print("Creating advanced features with pandas-ta...")
     df_features = create_features(df)
 
-    # Ensure same feature extraction logic as training
-    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target']
-    features = [col for col in df_features.columns if col not in exclude_cols]
+    # Slice the out-of-sample data FIRST to prevent any data leakage
+    split_idx = int(len(df_features) * 0.8)
+    oos_df = df_features.iloc[split_idx:].copy()
 
-    X = df_features[features]
+    # Ensure same feature extraction logic as training
+    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
+    features = [col for col in oos_df.columns if col not in exclude_cols]
+
+    X_oos = oos_df[features]
 
     print(f"Loading XGBoost model from {args.model}...")
     model = XGBClassifier()
-    model.load_model(model_path)
+    try:
+        model.load_model(model_path)
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        sys.exit(1)
 
     strategy = MLTradingStrategy(model)
-    signals = strategy.generate_signals(X)
-    results = strategy.calculate_returns(df_features, signals)
-
-    # The model was trained on the first 80%, so we strictly evaluate on the last 20% (Out-of-Sample)
-    split_idx = int(len(results) * 0.8)
-    oos_results = results.iloc[split_idx:].copy()
+    signals = strategy.generate_signals(X_oos)
+    oos_results = strategy.calculate_returns(oos_df, signals)
 
     # Recalculate cumulative return for out-of-sample period
     oos_results['cum_ret'] = (1 + oos_results['strat_ret']).cumprod()
