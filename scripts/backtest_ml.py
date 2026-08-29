@@ -37,11 +37,18 @@ def main():
     split_idx = int(len(df_features) * 0.8)
     oos_df = df_features.iloc[split_idx:].copy()
 
-    # Ensure same feature extraction logic as training
-    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
-    features = [col for col in oos_df.columns if col not in exclude_cols]
+    # Load selected features if available
+    features_path = os.path.join(OUTPUT_DIR, "ml_features.txt")
+    if os.path.exists(features_path):
+        with open(features_path, 'r') as f:
+            top_features = f.read().split(',')
+        print(f"Loaded {len(top_features)} selected features from training.")
+    else:
+        # Fallback if train_ml was not run
+        exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
+        top_features = [col for col in oos_df.columns if col not in exclude_cols]
 
-    X_oos = oos_df[features]
+    X_oos = oos_df[top_features]
 
     print(f"Loading XGBoost model from {args.model}...")
     model = XGBClassifier()

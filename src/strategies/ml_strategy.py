@@ -14,8 +14,9 @@ class MLTradingStrategy:
         # Predict returns 1 (up) or 0 (down)
         predictions = self.model.predict(X)
 
-        # Position is 1 if prediction is up, else 0
+        # Position is 1 if prediction is up, -1 if down
         signals = pd.Series(predictions, index=X.index, name='position')
+        signals = signals.replace(0, -1)
 
         # Shift signals by 1 so we trade on the NEXT bar after the prediction
         # (Since prediction uses data up to close of current bar, execution happens next open/close)

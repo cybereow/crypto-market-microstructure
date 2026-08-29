@@ -17,7 +17,9 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Core Returns
     data['ret_1d'] = data['close'].pct_change()
+    data['ret_2d'] = data['close'].pct_change(2)
     data['ret_3d'] = data['close'].pct_change(3)
+    data['ret_5d'] = data['close'].pct_change(5)
 
     # Advanced Indicators implemented with pure pandas
     # 1. Trend: MACD
@@ -64,8 +66,16 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['sma_50'] = data['close'].rolling(window=50).mean()
     data['sma_dist'] = data['sma_10'] / data['sma_50'] - 1
 
+    # Volatility Ratio
+    data['ATR_50'] = true_range.rolling(50).mean()
+    data['ATR_ratio'] = data['ATR_14'] / (data['ATR_50'] + 1e-9)
+
     # Volume and Momentum Features
     if 'volume' in data.columns:
+        # Volume Profile Changes
+        data['vol_change_1d'] = data['volume'].pct_change()
+        data['vol_change_3d'] = data['volume'].pct_change(3)
+
         # Volume SMA
         data['vol_sma_20'] = data['volume'].rolling(window=20).mean()
         data['vol_ratio'] = data['volume'] / (data['vol_sma_20'] + 1e-9)
@@ -145,13 +155,27 @@ def main():
     X = df_features[features]
     y = df_features['target']
 
-    # Walk-Forward Validation using TimeSeriesSplit on the first 80% of data (In-Sample)
     # The last 20% is strictly held out for backtesting (Out-of-Sample)
     train_size = int(len(X) * 0.8)
     X_train_full = X.iloc[:train_size]
     y_train_full = y.iloc[:train_size]
 
-    tscv = TimeSeriesSplit(n_splits=5)
+    # Initial model for feature selection (on IN-SAMPLE data only)
+    print("Running initial model for feature selection...")
+    sel_model = XGBClassifier(random_state=42, eval_metric='logloss')
+    sel_model.fit(X_train_full, y_train_full)
+    importance = sel_model.feature_importances_
+    feat_imp = pd.DataFrame({'Feature': features, 'Importance': importance})
+    feat_imp = feat_imp.sort_values(by='Importance', ascending=False)
+
+    # Select top 15 features
+    top_features = feat_imp.head(15)['Feature'].tolist()
+    print(f"\nSelected top 15 features: {top_features}")
+    X_train_full = X_train_full[top_features]
+
+    # Walk-Forward Validation using TimeSeriesSplit over IN-SAMPLE data
+    # With gap to prevent leakage
+    tscv = TimeSeriesSplit(n_splits=5, gap=5)
 
     base_model = XGBClassifier(random_state=42, eval_metric='logloss')
 
@@ -181,12 +205,10 @@ def main():
 
     model = search.best_estimator_
 
-    # Feature Importance Logging
-    importance = model.feature_importances_
-    feat_imp = pd.DataFrame({'Feature': features, 'Importance': importance})
-    feat_imp = feat_imp.sort_values(by='Importance', ascending=False)
-    print("\nTop 5 Feature Importances:")
-    print(feat_imp.head(5).to_string(index=False))
+    # Also save top features to a separate file so backtest_ml.py knows which features to use
+    features_path = os.path.join(OUTPUT_DIR, "ml_features.txt")
+    with open(features_path, 'w') as f:
+        f.write(','.join(top_features))
 
     model_path = os.path.join(OUTPUT_DIR, args.model_out)
     model.save_model(model_path)
