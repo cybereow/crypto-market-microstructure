@@ -41,7 +41,7 @@ def main():
     features_path = os.path.join(OUTPUT_DIR, "ml_features.txt")
     if os.path.exists(features_path):
         with open(features_path, 'r') as f:
-            top_features = f.read().split(',')
+            top_features = [feat.strip() for feat in f.read().split(',') if feat.strip()]
         print(f"Loaded {len(top_features)} selected features from training.")
     else:
         # Fallback if train_ml was not run

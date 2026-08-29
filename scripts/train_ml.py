@@ -160,10 +160,15 @@ def main():
     X_train_full = X.iloc[:train_size]
     y_train_full = y.iloc[:train_size]
 
-    # Initial model for feature selection (on IN-SAMPLE data only)
+    # Initial model for feature selection
+    # Fit only on the first 50% of the IN-SAMPLE data to prevent peeking at validation folds
+    sel_train_size = int(len(X_train_full) * 0.5)
+    X_sel_train = X_train_full.iloc[:sel_train_size]
+    y_sel_train = y_train_full.iloc[:sel_train_size]
+
     print("Running initial model for feature selection...")
     sel_model = XGBClassifier(random_state=42, eval_metric='logloss')
-    sel_model.fit(X_train_full, y_train_full)
+    sel_model.fit(X_sel_train, y_sel_train)
     importance = sel_model.feature_importances_
     feat_imp = pd.DataFrame({'Feature': features, 'Importance': importance})
     feat_imp = feat_imp.sort_values(by='Importance', ascending=False)

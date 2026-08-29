@@ -109,7 +109,36 @@ class GridTradingStrategy:
             c = closes[i]
             pc = prev_closes[i]
 
-            # Re-center logic
+            # Buys: The price must have started ABOVE the level and dropped TO or BELOW it.
+            for level in grid_levels:
+                if pc > level and l <= level and grid_status[level] == 0:
+                    exec_price = level * (1 + self.slippage_pct)
+                    trade_value = trade_amount_quote
+                    fee = trade_value * self.fee_pct
+
+                    if cash >= (trade_value + fee):
+                        amount_bought = trade_value / exec_price
+                        cash -= (trade_value + fee)
+                        inventory += amount_bought
+                        # We store the base amount bought so we sell exactly this amount later
+                        grid_status[level] = amount_bought
+                        trades.append({'time': dates[i], 'type': 'buy', 'price': exec_price, 'amount': amount_bought})
+
+            # Sells: The price must have started BELOW the level and rose TO or ABOVE it.
+            for level in reversed(grid_levels):
+                if pc < level and h >= level and grid_status[level] > 0:
+                    exec_price = level * (1 - self.slippage_pct)
+                    amount_to_sell = grid_status[level]
+
+                    if inventory >= amount_to_sell * 0.999:
+                        trade_value = amount_to_sell * exec_price
+                        fee = trade_value * self.fee_pct
+                        cash += (trade_value - fee)
+                        inventory -= amount_to_sell
+                        grid_status[level] = 0
+                        trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
+
+            # Re-center logic AFTER grid trades to correctly capture intra-bar action
             if c > upper_bound or c < lower_bound:
                 # Rebalance portfolio to 50/50
                 equity = cash + (inventory * c)
@@ -166,36 +195,6 @@ class GridTradingStrategy:
                         grid_status[level] = trade_amount_base
                     else:
                         grid_status[level] = 0
-
-
-            # Buys: The price must have started ABOVE the level and dropped TO or BELOW it.
-            for level in grid_levels:
-                if pc > level and l <= level and grid_status[level] == 0:
-                    exec_price = level * (1 + self.slippage_pct)
-                    trade_value = trade_amount_quote
-                    fee = trade_value * self.fee_pct
-
-                    if cash >= (trade_value + fee):
-                        amount_bought = trade_value / exec_price
-                        cash -= (trade_value + fee)
-                        inventory += amount_bought
-                        # We store the base amount bought so we sell exactly this amount later
-                        grid_status[level] = amount_bought
-                        trades.append({'time': dates[i], 'type': 'buy', 'price': exec_price, 'amount': amount_bought})
-
-            # Sells: The price must have started BELOW the level and rose TO or ABOVE it.
-            for level in reversed(grid_levels):
-                if pc < level and h >= level and grid_status[level] > 0:
-                    exec_price = level * (1 - self.slippage_pct)
-                    amount_to_sell = grid_status[level]
-
-                    if inventory >= amount_to_sell * 0.999:
-                        trade_value = amount_to_sell * exec_price
-                        fee = trade_value * self.fee_pct
-                        cash += (trade_value - fee)
-                        inventory -= amount_to_sell
-                        grid_status[level] = 0
-                        trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
 
             equity = cash + (inventory * c)
             equity_curve.append(equity)

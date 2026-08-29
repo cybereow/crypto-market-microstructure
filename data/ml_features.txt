@@ -1,1 +1,1 @@
-sma_50,ATR_50,BBM_20_2.0,OBV_trend,OBV_dist,ret_5d,MACDh_12_26_9,OBV_sma_20,sma_dist,ret_3d,ret_2d,vol_sma_20,RSI_70,RSI_14,vol_change_3d
+RSI_70,BBU_20_2.0,ATR_50,BBM_20_2.0,RSI_14,ATR_ratio,vol_sma_20,vol_change_1d,OBV,OBV_trend,MACDs_12_26_9,vol_ratio,sma_50,OBV_sma_70,ret_3d
