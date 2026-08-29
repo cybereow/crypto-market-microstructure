@@ -30,12 +30,16 @@ def main():
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
 
-    print("Creating features...")
+    print("Creating advanced features with pandas-ta...")
     df_features = create_features(df)
-    features = ['ret_1d', 'ret_3d', 'sma_dist', 'vol_10d']
+
+    # Ensure same feature extraction logic as training
+    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target']
+    features = [col for col in df_features.columns if col not in exclude_cols]
+
     X = df_features[features]
 
-    print(f"Loading model from {args.model}...")
+    print(f"Loading XGBoost model from {args.model}...")
     with open(model_path, 'rb') as f:
         model = pickle.load(f)
 

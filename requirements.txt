@@ -7,3 +7,4 @@ statsmodels
 ccxt
 xgboost
 yfinance
+pandas-ta

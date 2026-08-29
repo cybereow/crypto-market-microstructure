@@ -4,8 +4,8 @@ import sys
 import pickle
 
 import pandas as pd
-import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+import pandas_ta as ta
+from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 
@@ -13,20 +13,32 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 
 def create_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Creates technical indicators as features for ML."""
+    """Creates technical indicators as features for ML using pandas-ta."""
     data = df.copy()
 
-    # Returns
+    # Core Returns
     data['ret_1d'] = data['close'].pct_change()
     data['ret_3d'] = data['close'].pct_change(3)
 
-    # Simple Moving Averages
-    data['sma_10'] = data['close'].rolling(10).mean()
-    data['sma_30'] = data['close'].rolling(30).mean()
-    data['sma_dist'] = data['sma_10'] / data['sma_30'] - 1
+    # Advanced Indicators via pandas-ta
+    # 1. Trend: MACD
+    macd = data.ta.macd(fast=12, slow=26, signal=9)
+    if macd is not None:
+        data = pd.concat([data, macd], axis=1)
 
-    # Volatility
-    data['vol_10d'] = data['ret_1d'].rolling(10).std()
+    # 2. Momentum: RSI
+    data['rsi'] = data.ta.rsi(length=14)
+
+    # 3. Volatility: ATR and Bollinger Bands
+    data['atr'] = data.ta.atr(length=14)
+    bbands = data.ta.bbands(length=20, std=2)
+    if bbands is not None:
+        data = pd.concat([data, bbands], axis=1)
+
+    # Moving Average Distance
+    data['sma_10'] = data.ta.sma(length=10)
+    data['sma_50'] = data.ta.sma(length=50)
+    data['sma_dist'] = data['sma_10'] / data['sma_50'] - 1
 
     # Target: 1 if next day's return is positive, 0 otherwise
     data['target'] = (data['ret_1d'].shift(-1) > 0).astype(int)
@@ -37,7 +49,7 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 def main():
-    parser = argparse.ArgumentParser(description="Train ML model for price direction prediction.")
+    parser = argparse.ArgumentParser(description="Train XGBoost model for price direction prediction.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
     parser.add_argument("--model-out", type=str, default="ml_model.pkl", help="Filename to save the trained model")
     args = parser.parse_args()
@@ -50,10 +62,13 @@ def main():
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
 
-    print("Creating features...")
+    print("Creating advanced features with pandas-ta...")
     df_features = create_features(df)
 
-    features = ['ret_1d', 'ret_3d', 'sma_dist', 'vol_10d']
+    # Extract all created features (excluding price data and target)
+    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target']
+    features = [col for col in df_features.columns if col not in exclude_cols]
+
     X = df_features[features]
     y = df_features['target']
 
@@ -62,8 +77,14 @@ def main():
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
-    print(f"Training RandomForestClassifier on {len(X_train)} samples...")
-    model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    print(f"Training XGBoost Classifier on {len(X_train)} samples with {len(features)} features...")
+    model = XGBClassifier(
+        n_estimators=200,
+        max_depth=3,
+        learning_rate=0.05,
+        random_state=42,
+        eval_metric='logloss'
+    )
     model.fit(X_train, y_train)
 
     print("Evaluating model...")
