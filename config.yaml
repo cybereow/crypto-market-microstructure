@@ -1,53 +1,6 @@
-# Triangular arbitrage within Tabdeal only: for every asset X listed
-# against both USDT and IRT, compare the "synthetic" X/IRT price implied
-# by (X/USDT * USDT/IRT) against the real quoted X/IRT price.
-#
-# Why single-exchange, not cross-exchange: no second account, no transfer
-# risk/time, no dependency on another exchange's API or fee schedule.
-# Why not a specific asset (e.g. PAXG): PAXG is never mentioned anywhere
-# in Tabdeal's official API docs, so its existence there is unverified --
-# scanning every asset that actually has both markets (discovered live via
-# exchangeInfo) avoids betting on an unconfirmed claim.
+# Project configurations
 
-exchange:
-  tabdeal:
-    base_url: https://api1.tabdeal.org/r/api/v1
-    # bps, taker (VIP0, no discount) -- confirmed against docs.tabdeal.org
-    taker_fee_bps: 10.0
+# Machine Learning and Statistical Arbitrage config will be placed here
 
-triangular:
-  anchor_symbol: USDTIRT
-  # Cap on how many base assets to scan per cycle. Requests run in
-  # parallel (max_workers), so raising this mostly costs a bit more time
-  # per cycle, not linearly more wall-clock time. Still capped rather than
-  # scanning everything, since the real API rate limit is unconfirmed --
-  # raise gradually and watch for errors/blocking.
-  max_symbols: 100
-  # How many depth requests to run at the same time. Higher = faster full
-  # scans, but more load per second against an unconfirmed rate limit.
-  # Lowered from 10 -- real runs saw frequent DNS/timeout/502 errors at
-  # that level. The client now retries transient errors automatically, but
-  # keeping concurrency modest still helps the hit rate.
-  max_workers: 5
-  poll_interval_seconds: 15
-  # Minimum net edge (after 3 legs of taker fees) to flag as viable.
-  min_net_edge_bps: 50
-  depth_limit: 5
-  db_path: data/triangular_arb.db
-  output_dir: research/triangular_arbitrage/output
-
-# LBank funding-rate arbitrage (Long Spot + Short Perp). Unlike Tabdeal,
-# LBank's perpetual-swap product has a real, live-confirmed fundingRate
-# field per symbol -- but no historical archive is documented, so this
-# self-collects a dataset the same way the triangular scanner does.
-lbank:
-  product_group: SwapU
-  # bps, one-shot per leg. UNCONFIRMED -- LBank's public spot fee docs gave
-  # an internally inconsistent example (makerCommission 0.10 vs
-  # takerCommission 10.00), and perp/contract fees aren't documented at
-  # all in what's public. Do not trust net_apy numbers until these are
-  # replaced with real values from your own LBank account.
-  spot_taker_fee_bps: 10.0
-  perp_taker_fee_bps: 10.0
-  poll_interval_seconds: 60
-  db_path: data/lbank_funding.db
+data:
+  output_dir: data/
