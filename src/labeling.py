@@ -130,19 +130,68 @@ def range_fade_entries(df: pd.DataFrame, lookback: int = 20,
     return entries
 
 
-def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
-                           pt_mult: float = 1.5, sl_mult: float = 1.0,
-                           max_holding: int = 18) -> pd.DataFrame:
-    """For each non-zero entry, scan forward up to `max_holding` bars and
-    label it by whichever barrier is touched first:
-      - profit-take at entry_price +/- pt_mult * ATR (in the entry's direction)
-      - stop-loss at entry_price -/+ sl_mult * ATR
+def scan_triple_barrier(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+                         start: int, side: int, entry_price: float,
+                         pt_dist: float, sl_dist: float, max_holding: int) -> dict:
+    """Scan forward from bar `start` (exclusive) up to `max_holding` bars and
+    report whichever barrier is touched first:
+      - profit-take at entry_price +/- pt_dist (in the entry's direction)
+      - stop-loss at entry_price -/+ sl_dist
       - vertical barrier (max_holding reached): label by the sign of the
         realized return at exit instead of leaving it undefined.
 
     If a bar's high/low touch both barriers simultaneously, the stop-loss is
     assumed to have hit first — the conservative assumption, since intra-bar
     order is unknown.
+
+    Shared by `triple_barrier_labels` (entry at the signal bar's close) and
+    `src.execution.triple_barrier_from_fill` (entry at a simulated limit
+    fill), so both agree on exactly how a barrier touch is resolved.
+
+    Returns {'label', 'exit_price', 'hold'}.
+    """
+    n = len(closes)
+    if side > 0:
+        upper = entry_price + pt_dist
+        lower = entry_price - sl_dist
+    else:
+        upper = entry_price + sl_dist
+        lower = entry_price - pt_dist
+
+    label = None
+    exit_price = None
+    hold = 0
+    end = min(start + max_holding, n - 1)
+    for j in range(start + 1, end + 1):
+        hold = j - start
+        hit_upper = highs[j] >= upper
+        hit_lower = lows[j] <= lower
+        if hit_upper and hit_lower:
+            exit_price = lower if side > 0 else upper
+            label = 0
+            break
+        if hit_upper:
+            exit_price = upper
+            label = 1 if side > 0 else 0
+            break
+        if hit_lower:
+            exit_price = lower
+            label = 0 if side > 0 else 1
+            break
+    if label is None:
+        # Vertical barrier: neither touched within max_holding.
+        exit_price = closes[end]
+        ret_at_end = side * (exit_price / entry_price - 1)
+        label = 1 if ret_at_end > 0 else 0
+
+    return {'label': label, 'exit_price': exit_price, 'hold': hold}
+
+
+def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
+                           pt_mult: float = 1.5, sl_mult: float = 1.0,
+                           max_holding: int = 18) -> pd.DataFrame:
+    """For each non-zero entry, label it with `scan_triple_barrier` using the
+    signal bar's own close as the (assumed instant/market-fill) entry price.
 
     Returns a DataFrame indexed like `entries` (rows where entries == 0 are
     dropped) with columns: side (the primary signal's direction), label (1
@@ -165,43 +214,12 @@ def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
         entry_price = closes[i]
         pt_dist = pt_mult * atr_vals[i]
         sl_dist = sl_mult * atr_vals[i]
-        if side > 0:
-            upper = entry_price + pt_dist
-            lower = entry_price - sl_dist
-        else:
-            upper = entry_price + sl_dist
-            lower = entry_price - pt_dist
 
-        label = None
-        exit_price = None
-        hold = 0
-        end = min(i + max_holding, n - 1)
-        for j in range(i + 1, end + 1):
-            hold = j - i
-            hit_upper = highs[j] >= upper
-            hit_lower = lows[j] <= lower
-            if hit_upper and hit_lower:
-                # Ambiguous within-bar order — assume the adverse barrier hit first.
-                exit_price = lower if side > 0 else upper
-                label = 0
-                break
-            if hit_upper:
-                exit_price = upper
-                label = 1 if side > 0 else 0
-                break
-            if hit_lower:
-                exit_price = lower
-                label = 0 if side > 0 else 1
-                break
-        if label is None:
-            # Vertical barrier: neither touched within max_holding.
-            exit_price = closes[end]
-            ret_at_end = side * (exit_price / entry_price - 1)
-            label = 1 if ret_at_end > 0 else 0
-
-        ret = side * (exit_price / entry_price - 1)
-        rows.append({'side': side, 'label': label, 'ret': ret, 'hold': hold,
-                     'entry_pos': i, 'exit_pos': i + hold})
+        outcome = scan_triple_barrier(highs, lows, closes, i, side, entry_price,
+                                       pt_dist, sl_dist, max_holding)
+        ret = side * (outcome['exit_price'] / entry_price - 1)
+        rows.append({'side': side, 'label': outcome['label'], 'ret': ret,
+                     'hold': outcome['hold'], 'entry_pos': i, 'exit_pos': i + outcome['hold']})
         idx.append(df.index[i])
 
     return pd.DataFrame(rows, index=pd.Index(idx, name=df.index.name))

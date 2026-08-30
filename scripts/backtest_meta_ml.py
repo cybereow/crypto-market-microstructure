@@ -165,7 +165,12 @@ def main():
     profit_factor = wins.sum() / abs(losses.sum()) if len(losses) and losses.sum() != 0 else float('inf')
     total_return = np.prod(1 + net_ret) - 1
 
-    avg_hold_days = taken_df['hold'].mean() * 4 / 24  # bars are 4h
+    # Bar width inferred, not assumed: a hardcoded 4h under/overstates
+    # avg_hold_days (and therefore trades_per_year and Sharpe) on any other
+    # timeframe, e.g. 1d data downloaded via download_klines_vision.py.
+    deltas = pd.Series(test_df.index.unique()).diff().dropna()
+    bar_hours = deltas.mode().iloc[0].total_seconds() / 3600.0 if not deltas.empty else 4.0
+    avg_hold_days = taken_df['hold'].mean() * bar_hours / 24
     trades_per_year = 365 / max(avg_hold_days, 0.1)
     sharpe = (np.mean(net_ret) / (np.std(net_ret) + 1e-9)) * np.sqrt(trades_per_year) if len(net_ret) > 1 else 0.0
 
