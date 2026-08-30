@@ -43,6 +43,8 @@ from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_
                             precision_threshold_table)
 from src.novelty import LeafNoveltyDetector
 from src.gating import GateConfig, apply_gate, select_non_overlapping
+from src.significance import (binomial_ci, breakeven_win_rate, describe_result,
+                             permutation_test)
 
 
 def kelly_fraction(p: np.ndarray, b: float, kelly_scale: float = 0.5,
@@ -119,6 +121,11 @@ def main():
     parser.add_argument("--alignment-bonus", type=float, default=0.02)
     parser.add_argument("--novelty-penalty", type=float, default=0.06)
 
+    parser.add_argument("--bar-hours", type=float, default=None,
+                        help="Bar width in hours for the purge gap "
+                             "(default: inferred from the data)")
+    parser.add_argument("--perm-iter", type=int, default=5000,
+                        help="Permutation iterations for the significance test")
     parser.add_argument("--kelly-scale", type=float, default=0.5)
     parser.add_argument("--fee-pct", type=float, default=0.001)
     parser.add_argument("--slippage-pct", type=float, default=0.001)
@@ -164,7 +171,20 @@ def main():
     n = len(pooled_df)
     fold_edges = [pooled_df.index[int(n * i / args.n_folds)] for i in range(args.n_folds)]
     fold_edges.append(pooled_df.index[-1] + pd.Timedelta(seconds=1))
-    purge_gap = pd.Timedelta(hours=4 * args.max_holding)
+    # Purge/embargo must span the longest a trade can stay open, expressed in
+    # wall-clock time. The bar width is inferred rather than assumed: hardcoding
+    # 4h silently over-purges 1h data (throwing away training rows) and, worse,
+    # under-purges 1d data, which would leak overlapping labels across the fold
+    # boundary and inflate every number in this report.
+    if args.bar_hours is not None:
+        bar_hours = args.bar_hours
+    else:
+        deltas = pd.Series(pooled_df.index.unique()).diff().dropna()
+        bar_hours = (deltas.mode().iloc[0].total_seconds() / 3600.0
+                     if not deltas.empty else 4.0)
+    purge_gap = pd.Timedelta(hours=bar_hours * args.max_holding)
+    print(f"Inferred bar width: {bar_hours:g}h -> purge/embargo gap "
+          f"{purge_gap} ({args.max_holding} bars)")
 
     gate_config = GateConfig(
         use_alignment=(not args.no_dynamic_threshold) and btc_regime is not None,
@@ -265,8 +285,9 @@ def main():
     # --- Ablation: the marginal contribution of each component. Without
     # --- this table there is no way to tell whether a knob earned its
     # --- overfitting risk or just added a degree of freedom.
-    print(f"\n  {'Configuration':<44}{'n':>6}{'win%':>8}{'PF':>7}{'ret%':>9}")
-    print(f"  {'-' * 72}")
+    print(f"\n  {'Configuration':<40}{'n':>6}{'win%':>8}{'PF':>7}{'ret%':>8}"
+          f"{'95% CI':>16}{'p_perm':>9}")
+    print(f"  {'-' * 94}")
 
     rows = []
     p = combined['p_win'].to_numpy()
@@ -299,14 +320,50 @@ def main():
     variants.append(("+ leaf-novelty OOD filter", mask_n))
     variants.append(("+ ALL (full gate, as validated)", combined['taken'].to_numpy()))
 
+    # The candidate pool every selection is drawn from, used as the null
+    # for the permutation test below.
+    pool_labels = combined['label'].to_numpy()
+
     for name, mask in variants:
         taken = select_non_overlapping(combined, mask)
         s = summarize(taken, payoff_ratio, cost_per_trade, args.kelly_scale, name)
         wr = f"{s['win_rate']:.1%}" if s['n_trades'] else "n/a"
         pf = f"{s['profit_factor']:.2f}" if s['n_trades'] else "n/a"
         rt = f"{s['total_return']:.1%}" if s['n_trades'] else "n/a"
-        print(f"  {name:<44}{s['n_trades']:>6}{wr:>8}{pf:>7}{rt:>9}")
+
+        # Exact CI on the win rate, plus a permutation p-value asking
+        # whether picking THESE n trades beats picking any random n from
+        # the same pool. A selective filter with a thin sample can post a
+        # high win rate by luck alone; this is what distinguishes the two.
+        if s['n_trades']:
+            n_wins = int(round(s['win_rate'] * s['n_trades']))
+            lo, hi = binomial_ci(n_wins, s['n_trades'])
+            ci = f"[{lo:.0%},{hi:.0%}]"
+            perm = permutation_test(pool_labels, mask, n_iter=args.perm_iter)
+            pv = perm['p_value']
+            pstr = f"{pv:.4f}" if np.isfinite(pv) else "n/a"
+            s['ci_low'], s['ci_high'], s['p_perm'] = lo, hi, pv
+        else:
+            ci, pstr = "n/a", "n/a"
+
+        print(f"  {name:<40}{s['n_trades']:>6}{wr:>8}{pf:>7}{rt:>8}{ci:>16}{pstr:>9}")
         rows.append(s)
+
+    # --- The verdict. A table of win rates is not a result until it is
+    # --- compared against the breakeven the barrier geometry imposes and
+    # --- corrected for how many variants were tried to find it.
+    be = breakeven_win_rate(payoff_ratio, cost_per_trade)
+    n_tried = len(variants)
+    print(f"\n  Breakeven win rate for pt/sl={payoff_ratio:.2f} after "
+          f"{cost_per_trade:.2%} round-trip cost: {be:.1%}")
+    print(f"  Verdict (Sidak-deflated for the {n_tried} configurations compared here):")
+    for s in rows:
+        if not s['n_trades']:
+            continue
+        n_wins = int(round(s['win_rate'] * s['n_trades']))
+        d = describe_result(n_wins, s['n_trades'], payoff_ratio,
+                            cost_per_trade, n_configurations_tried=n_tried)
+        print(f"    {s['label']:<40} p_defl={d['p_deflated']:>7.4f}  {d['verdict']}")
 
     print(f"\n  Precision/volume tradeoff on pooled OOS predictions:")
     print("  " + precision_threshold_table(combined['label'], combined['p_win'])
