@@ -1,0 +1,4 @@
+pt_mult=2.0
+sl_mult=2.0
+max_holding=18
+lookback=20
