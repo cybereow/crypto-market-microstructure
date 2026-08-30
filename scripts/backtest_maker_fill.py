@@ -46,7 +46,7 @@ from src.metrics import net_pf_expectancy as economics
 def run_asset(path: str, signal: str, lookback: int, pt_mult: float, sl_mult: float,
               max_holding: int, offset_mult: float, queue_timeout: int, obi_path: str = None):
     df = pd.read_csv(path, index_col='timestamp', parse_dates=True)
-    if obi_path:
+    if obi_path and 'obi' not in df.columns:
         obi_df = pd.read_csv(obi_path, index_col='timestamp', parse_dates=True)
         df = df.join(obi_df[['obi']], how='left')
         df['obi'] = df['obi'].ffill()
