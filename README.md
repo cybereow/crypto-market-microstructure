@@ -1,124 +1,119 @@
-# Trading Bot — v2.1 (Machine Learning & Quant Strategies)
+# Crypto Quant Research Framework
 
-> ## What this repository actually demonstrates
->
-> This is a quantitative research log, not a "profitable trading bot" — and that
-> distinction is the point. Every strategy tested here is documented with its
-> real, walk-forward, cost-adjusted result, including the ones that failed and
-> the one significant finding that got *retracted* once a stricter statistical
-> test was applied (see §7). If you're evaluating this as engineering/research
-> work rather than as an investment product, the interesting parts are:
->
-> - **Statistical rigor over a good-looking number.** Bootstrap and permutation
->   significance testing, deflated p-values for multiple-testing correction,
->   purged/embargoed walk-forward cross-validation — built from scratch in
->   `src/significance.py` and used to reject the project's own best-looking
->   result once it didn't survive scrutiny (§7).
-> - **Tick-level market data engineering.** A chunked, memory-safe processor
->   for Binance's raw order-book tick archive (~20M events/day/asset) that
->   derives both an order-flow-imbalance signal *and* an OHLC price series
->   directly from the same tick stream — no separate download, and a unit
->   test that locks in correctness across chunk/day boundaries
->   (`scripts/download_l2_obi.py`, `tests/test_download_l2_obi.py`).
-> - **Meta-labeling ML pipeline** (Lopez de Prado style): triple-barrier
->   labeling, an XGBoost classifier trained to answer "will this specific
->   trade setup work" rather than "which way will price move," walk-forward
->   validated and cost-adjusted (`src/labeling.py`, `scripts/train_meta_ml.py`).
-> - **Execution-realism modeling**, not just backtest P&L: a maker-order queue
->   fill simulator (`src/execution.py`), a two-sided market-making simulator
->   with inventory/signal-driven quote skew (`src/market_making.py`), and a
->   live shadow paper-trader that checks a backtest's assumptions against real
->   exchange quotes without ever risking capital (`src/paper_trading.py`).
-> - **96 passing unit tests** covering the statistical and execution logic,
->   not just the happy path.
->
-> Stack: Python, pandas/numpy, XGBoost, scikit-learn, ccxt, statsmodels/scipy.
-> Open to contract/freelance data-engineering and quant-research work —
-> reach out via GitHub.
+A quantitative research log for crypto trading strategies — not a "profitable
+bot." Every strategy here is documented with its real, walk-forward,
+cost-adjusted result, including the ones that failed and the one
+significant-looking result that got **retracted** once a stricter statistical
+test was applied. If you're evaluating this as engineering/research work
+rather than an investment product, that discipline is the point.
 
-این پروژه شامل یک فریم‌ورک پیشرفته برای استراتژی‌های کمی (Quantitative) و الگوریتم‌های مبتنی بر ماشین‌لرنینگ جهت معامله در بازارهای مالی است.
+**Stack:** Python, pandas/numpy, XGBoost, scikit-learn, ccxt, statsmodels/scipy.
+Open to contract/freelance data-engineering and quant-research work — reach
+out via GitHub.
 
-## استراتژی‌های پیاده‌سازی شده
+## What's actually interesting here
 
-۱. **یادگیری ماشین (Machine Learning - XGBoost)**: استفاده از اندیکاتورهای پیشرفته تکنیکال (مثل MACD, RSI, ATR, Bollinger Bands از طریق کتابخانه `pandas-ta`) برای آموزش یک مدل قدرتمند **XGBoost** جهت پیش‌بینی جهت کندل بعدی. توجه: پیش‌بینی مستقیم جهت کندل بعدی روی داده‌های واقعی معمولاً دقتی نزدیک به ۵۰٪ (تصادفی) دارد — برای یک روش معتبرتر به بخش Meta-Labeling زیر مراجعه کنید.
-۲. **معاملات شبکه‌ای (Grid Trading)**: یکی از امن‌ترین الگوریتم‌ها برای بازارهای خنثی (Range). این ربات محدوده‌ای از قیمت‌ها را شبکه‌بندی کرده، در افت قیمت‌ها به صورت پله‌ای خرید می‌کند و در رشد قیمت می‌فروشد تا از نوسانات کوچک سود مستمر بگیرد.
-۳. **آربیتراژ آماری (Pairs Trading)**: پیدا کردن جفت‌ارزهایی که از نظر آماری هم‌بستگی بالایی دارند (Cointegrated) و معامله بر اساس انحراف از معیار (Z-Score) اسپرد آن‌ها.
-۴. **Meta-Labeling (پیشنهادی)**: به‌جای پیش‌بینی مستقیم جهت قیمت، یک سیگنال ساده‌ی rule-based (شکست Donchian یا بازگشت RSI) معامله‌های کاندید تولید می‌کند و مدل XGBoost فقط پیش‌بینی می‌کند که آیا این معامله‌ی مشخص به هدف سود می‌رسد یا استاپ می‌خورد (روش Triple-Barrier). داده‌ی هر ۶ ارز با هم pool می‌شود و اعتبارسنجی به‌صورت walk-forward (چند بار retrain روی بازه‌های زمانی متوالی) انجام می‌شود.
+- **Statistical rigor over a good-looking number.** Bootstrap and permutation
+  significance testing, deflated p-values for multiple-testing correction,
+  purged/embargoed walk-forward cross-validation — built from scratch in
+  [`src/significance.py`](src/significance.py) and used to reject the
+  project's own best-looking result once it didn't survive scrutiny (Log §7).
+- **Tick-level market data engineering.** A chunked, memory-safe processor
+  for Binance's raw order-book tick archive (~20M events/day/asset) that
+  derives both an order-flow-imbalance signal *and* an OHLC price series
+  directly from the same tick stream, with a unit test that locks in
+  correctness across chunk/day boundaries
+  ([`scripts/download_l2_obi.py`](scripts/download_l2_obi.py)).
+- **Meta-labeling ML pipeline** (Lopez de Prado style): triple-barrier
+  labeling, an XGBoost classifier trained to answer "will this specific
+  trade setup work" rather than "which way will price move," walk-forward
+  validated and cost-adjusted
+  ([`src/labeling.py`](src/labeling.py), [`scripts/train_meta_ml.py`](scripts/train_meta_ml.py)).
+- **Execution-realism modeling**, not just backtest P&L: a maker-order queue
+  fill simulator ([`src/execution.py`](src/execution.py)), a two-sided
+  market-making simulator with inventory/signal-driven quote skew
+  ([`src/market_making.py`](src/market_making.py)), and a live shadow
+  paper-trader that checks a backtest's assumptions against real exchange
+  quotes without ever risking capital
+  ([`src/paper_trading.py`](src/paper_trading.py)).
+- **96 passing unit tests** covering the statistical and execution logic, not
+  just the happy path.
 
-## نصب و راه‌اندازی
+## Key findings
 
-ابتدا کتابخانه‌های مورد نیاز را نصب کنید:
+The full experimental detail — real numbers, tables, exact commands to
+reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEARCH_LOG.md)**
+(Persian; §-numbers below refer to it). This is the condensed version.
+
+| # | Finding | Verdict |
+|---|---|---|
+| §6 | Win rate is set by barrier geometry (`breakeven = 1/(1+pt/sl)`), not model quality — a 91% win rate can still lose money | Structural insight |
+| §7 | Four ML "improvement" ideas raised win rate 48.8%→62.4% — but the improvement **failed significance testing** on a larger sample and 8-fold split | **Retracted** |
+| §8 | Root cause isolated: transaction cost, not the model — every signal's raw edge (~0.15%) was smaller than the assumed taker cost (0.4%) | Structural insight |
+| §8 | At maker-level cost (0.08%) the raw signal becomes significant on its own (p=0.0001) — the first edge that doesn't depend on any ML layer | Real, but cost-fragile |
+| §9 | Simulated maker-order queue fills against historical OHLC: edge survives at one a-priori config (p=0.03), but fails after correcting for a small robustness sweep (p=0.115) | Borderline |
+| §10 | Hypothesis: daily timeframe has a bigger, cost-resistant per-trade edge | **Rejected** — smaller edge, far fewer candidates |
+| §11 | Order-flow-imbalance (OBI) signal at 5-minute resolution, as a genuinely different (non-price) data source | **Null** in both directions |
+| §11-b | Same OBI signal re-tested at tick level (5-second bars): strongly significant (p=0.0003), robust to a direction-flip check and a time-split check | Real edge — but ~10x too small to clear even optimistic maker fees |
+| §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
+| §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
+
+## Project layout
+
+```
+.
+├── scripts/
+│   ├── download_data.py                # OHLCV via ccxt (live exchange API)
+│   ├── download_klines_vision.py       # Deep OHLCV history from Binance's public archive (spot or futures)
+│   ├── download_l2_obi.py              # Order-book imbalance + tick-level OHLC from bookTicker archive
+│   ├── download_funding_vision.py      # Funding-rate history (alt-data feature)
+│   ├── merge_klines.py                 # Safely merges a fresh CSV into existing history
+│   ├── sweep_barrier_geometry.py       # Sweeps pt/sl geometry: where is a high win rate actually profitable
+│   ├── train_ml.py / backtest_ml.py    # Direct-direction XGBoost baseline (the ~50% accuracy negative result)
+│   ├── train_meta_ml.py                # Pooled meta-labeling model training (triple-barrier)
+│   ├── backtest_meta_ml.py             # Single-asset meta-labeling backtest
+│   ├── backtest_meta_ml_walkforward.py # The real validator: pooled, purged, walk-forward
+│   ├── backtest_cross_sectional.py     # Cross-sectional ranking strategy
+│   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11)
+│   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
+│   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
+│   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
+│   └── backtest_grid.py                # Grid trading backtest
+├── src/
+│   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
+│   ├── execution.py      # Maker-order queue fill simulation (§9)
+│   ├── market_making.py  # Two-sided quote/fill/inventory simulator with skew (§13)
+│   ├── paper_trading.py  # Live shadow paper-trading state machine (§12)
+│   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
+│   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
+│   ├── metrics.py        # Trade-level win rate / profit factor
+│   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
+├── tests/                # 96 unit tests
+├── data/                 # Downloaded data and saved models (gitignored)
+└── docs/RESEARCH_LOG.md  # Full experimental log (Persian), §1-13
+```
+
+## Setup
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## نحوه استفاده
+## Quick start
 
-### ۱. دریافت داده‌های تاریخی (Data Collection)
-از `ccxt` برای دانلود داده‌های OHLCV استفاده می‌شود.
-
-```bash
-# دانلود داده روزانه بیت‌کوین از صرافی کراکن
-python scripts/download_data.py --exchange kraken --symbol BTC/USDT --timeframe 1d --limit 1000
-
-# دانلود داده اتریوم برای جفت‌گیری
-python scripts/download_data.py --exchange kraken --symbol ETH/USDT --timeframe 1d --limit 1000
-```
-*توجه: صرافی بایننس ممکن است در برخی مناطق مسدود باشد، به همین دلیل از کراکن به عنوان پیش‌فرض تست استفاده شده است.*
-
-### ۲. استراتژی ماشین‌لرنینگ (XGBoost)
-
-ابتدا مدل را روی داده‌های یک ارز آموزش دهید. این اسکریپت ده‌ها فیچر حرفه‌ای می‌سازد و مدل را آموزش داده و ذخیره می‌کند:
-```bash
-python scripts/train_ml.py --data kraken_BTC_USDT_1d.csv
-```
-
-سپس بک‌تست مدل را روی داده‌های Out-of-Sample اجرا کنید:
-```bash
-python scripts/backtest_ml.py --data kraken_BTC_USDT_1d.csv
-```
-
-### ۳. استراتژی معاملات شبکه‌ای (Grid Trading)
-
-برای بررسی عملکرد ربات نوسان‌گیر روی بازارهای رنج، اسکریپت زیر را اجرا کنید. تنظیماتی مثل تعداد گرید و دامنه شبکه قابل تنظیم است:
-```bash
-python scripts/backtest_grid.py --data kraken_BTC_USDT_1d.csv --grids 10 --range-pct 0.2
-```
-
-### ۴. استراتژی آربیتراژ آماری (Pairs Trading)
-
-ابتدا جفت‌هایی که هم‌بستگی آماری دارند (Cointegration) را پیدا کنید:
-```bash
-python scripts/find_pairs.py
-```
-
-سپس استراتژی را روی دو جفت بک‌تست بگیرید:
-```bash
-python scripts/backtest_pairs.py --asset1 kraken_BTC_USDT_1d.csv --asset2 kraken_ETH_USDT_1d.csv
-```
-
-### ۵. Meta-Labeling (پیشنهادی برای win rate بالاتر)
-
-**قدم صفر — داده‌ی عمیق (مهم‌ترین قدم):** صرافی کراکن برای تایم‌فریم ۴ ساعته فقط حدود ۷۲۰ کندل برمی‌گرداند (~۴ ماه) که تنها ~۶۰ معامله‌ی کاندید تولید می‌کند — برای آموزش مدل به‌شکل ناامیدکننده‌ای کم است. آرشیو عمومی بایننس (`data.binance.vision`) تاریخچه‌ی کامل می‌دهد:
+**1. Get deep history** (the public Binance archive gives ~14,400 4h candles
+per asset vs. ~720 from a live exchange API — the single highest-leverage
+step for anything ML-based):
 
 ```bash
 for s in BTCUSDT ETHUSDT SOLUSDT LINKUSDT AVAXUSDT DOTUSDT ADAUSDT XRPUSDT DOGEUSDT LTCUSDT ATOMUSDT; do
   python scripts/download_klines_vision.py --symbol $s --timeframe 4h --start-date 2020-01-01
 done
 ```
-نتیجه: ~۱۴٫۴۰۰ کندل به‌جای ۷۲۱ (۲۰ برابر) و ~۱۲٫۵۰۰ معامله‌ی کاندید به‌جای چند صد.
 
-**قدم صفر-ب — پر کردن شکاف ماه جاری:** آرشیو `data.binance.vision` فقط ماه‌های *کامل‌شده* را منتشر می‌کند، پس همیشه تا انتهای ماه گذشته متوقف می‌شود و تا ۳۱ روز از جدیدترین داده (که مهم‌ترین داده‌ی out-of-sample است) جا می‌ماند. اگر فایل CSV تازه‌ای از API یا پنل بایننس گرفتید، با این اسکریپت آن را به‌صورت ایمن به داده‌ی موجود بچسبانید:
+**2. Train and validate the meta-labeling model** (the pooled, purged,
+walk-forward validator is the one to trust — a single-asset backtest is not):
 
-```bash
-python scripts/merge_klines.py --new-dir /path/to/new_csvs --dry-run   # ابتدا بررسی
-python scripts/merge_klines.py --new-dir /path/to/new_csvs             # سپس ادغام
-```
-
-این اسکریپت پیش از نوشتن، کندل‌های *مشترک* دو منبع را مقایسه می‌کند و اگر قیمت‌ها هم‌خوانی نداشتند (مثلاً spot در مقابل perpetual، یا جفت‌ارز متفاوت) ادغام را **رد می‌کند**. چسباندن کورکورانه‌ی دو سری قیمت یک پرش مصنوعی در محل اتصال می‌سازد که استراتژی breakout آن را به‌عنوان «سیگنال» کشف می‌کند — یعنی بدتر از نداشتن داده.
-
-آموزش مدل (BTC به‌عنوان کانتکست رژیم بازار پاس داده می‌شود، نه به‌عنوان یک دارایی معامله‌شده):
 ```bash
 python scripts/train_meta_ml.py \
   --data binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv binance_LINK_USDT_4h.csv \
@@ -127,408 +122,40 @@ python scripts/train_meta_ml.py \
          binance_ATOM_USDT_4h.csv \
   --btc-regime-file binance_BTC_USDT_4h.csv \
   --signal reversion --pt-mult 2.0 --sl-mult 2.0 --target-precision 0.60
-```
 
-بک‌تست سریع روی یک ارز (نمونه‌ی کوچک، فقط برای بررسی سریع — آستانه‌ی کالیبره‌شده به‌طور خودکار خوانده می‌شود):
-```bash
-python scripts/backtest_meta_ml.py --data binance_ETH_USDT_4h.csv --btc-regime-file binance_BTC_USDT_4h.csv
-```
-
-اعتبارسنجی واقعی و قابل‌اتکا (walk-forward — این خروجی را ملاک قضاوت قرار دهید، نه بک‌تست تک‌ارزی بالا). جدول ablation سهم واقعی هر کامپوننت را نشان می‌دهد:
-```bash
 python scripts/backtest_meta_ml_walkforward.py \
-  --data binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv binance_LINK_USDT_4h.csv \
-         binance_AVAX_USDT_4h.csv binance_DOT_USDT_4h.csv binance_ADA_USDT_4h.csv \
-         binance_XRP_USDT_4h.csv binance_DOGE_USDT_4h.csv binance_LTC_USDT_4h.csv \
-         binance_ATOM_USDT_4h.csv \
+  --data binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv ... \
   --btc-regime-file binance_BTC_USDT_4h.csv \
   --signal reversion --pt-mult 2.0 --sl-mult 2.0 --target-precision 0.60
 ```
 
-### ۶. 🎯 هدف «۹۰٪ win rate» — نتیجه‌ی اندازه‌گیری واقعی
+**3. Check whether a high win rate is actually profitable for your geometry:**
 
-این مهم‌ترین یافته‌ی پروژه است و مستقیماً به سؤال شما پاسخ می‌دهد.
-
-**۹۰٪ win rate قابل دستیابی است، ولی تقریباً بی‌ارزش.** دلیلش یک اتحاد ریاضی است، نه کیفیت مدل:
-
-```
-breakeven_win_rate = 1 / (1 + pt/sl)
-```
-
-یعنی win rate اساساً توسط **هندسه‌ی حد سود/ضرر** تعیین می‌شود، نه توسط مدل. اگر حد سود را نزدیک و حد ضرر را دور بگذارید، win rate بالا «می‌خرید» — ولی هر ضرر چند برابر هر سود می‌شود.
-
-خروجی واقعی `scripts/sweep_barrier_geometry.py` (۱۰ ارز، ۱۲٫۵۰۰ معامله، walk-forward با purge، بعد از کسر کارمزد ۰٫۴٪):
-
-| سیگنال | pt/sl | breakeven WR | win rate (۱۰٪ برتر) | Profit Factor | نتیجه |
-|---|---|---|---|---|---|
-| breakout | 0.25/3.0 | **92.3%** | **91.6%** | **0.56** | ❌ win rate عالی، **پول از دست می‌دهد** |
-| breakout | 0.33/3.0 | 90.1% | **91.0%** | 0.82 | ❌ ۹۱٪ برد، ولی زیان‌ده |
-| breakout | 0.5/3.0 | 85.7% | 89.0% | 1.10 | ⚠️ مرزی |
-| **reversion** | **2.0/2.0** | **50.0%** | **58.8%** | **1.28** | ✅ **بهترین سوددهی** |
-
-**۹۱٪ win rate با profit factor 0.56 یعنی نابودی حساب.** در مقابل، ۵۸٫۸٪ win rate با payoff متعادل واقعاً سود می‌دهد.
-
-برای دیدن این جدول روی داده‌ی خودتان:
 ```bash
 python scripts/sweep_barrier_geometry.py \
   --data binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv ... \
   --btc-regime-file binance_BTC_USDT_4h.csv
 ```
 
-**پس هدف درست چیست؟** به‌جای «۹۰٪ win rate»، هدف را مشترکاً بیان کنید:
-> win rate ایکس، با **profit factor > 1.3** بعد از کسر هزینه‌ها، روی **حداقل ۲۰۰ معامله‌ی walk-forward**.
+**4. Simulate maker-order fills instead of assuming instant execution:**
 
-### ۷. چهار کامپوننت بهبود win rate و سهم واقعی هرکدام
-
-هر چهار ایده پیاده‌سازی و به‌صورت مستقل قابل خاموش‌کردن هستند تا سهمشان **اندازه‌گیری** شود، نه فرض:
-
-| کامپوننت | فایل | کاری که می‌کند |
-|---|---|---|
-| ۱. رگ رژیم بازار (BTC alignment) | `src/regime.py` | فیچر `btc_alignment = sign(side) == sign(BTC_trend)` را **صریحاً** می‌سازد، به‌جای امید به کشف این تعامل توسط درخت |
-| ۲. آستانه‌ی confidence دینامیک | `src/gating.py` | خلاف جهت BTC → آستانه بالاتر؛ هم‌جهت → پایین‌تر |
-| ۳. کالیبراسیون آستانه بر مبنای precision | `src/calibration.py` | جایگزین `scoring='f1'`؛ بدون ریسک custom gradient |
-| ۴. فیلتر OOD با leaf-frequency | `src/novelty.py` | از `pred_leaf` همان مدل XGBoost — بدون مدل دوم |
-
-**جدول ablation واقعی** (reversion، pt/sl=2.0/2.0، ۱۰ ارز، ۳٫۴۲۹ معامله‌ی walk-forward تا ۲۰۲۶-۰۸-۳۰، بعد از هزینه):
-
-| پیکربندی | تعداد | win rate | PF | بازده |
-|---|---|---|---|---|
-| فقط سیگنال اولیه (بدون مدل) | 2778 | 48.8% | 1.16 | +15.5% |
-| + آستانه‌ی ثابت 0.55 (روش قبلی) | 414 | 58.9% | 1.31 | +26.7% |
-| + آستانه‌ی کالیبره‌شده (ایده ۳) | 323 | 57.3% | 1.26 | +18.7% |
-| + آستانه‌ی دینامیک BTC (ایده ۱+۲) | 87 | 60.9% | 1.86 | +17.6% |
-| + فیلتر OOD (ایده ۴) | 322 | 57.5% | 1.27 | +19.2% |
-| **+ همه (گیت کامل)** | **85** | **62.4%** | **1.96** | +18.7% |
-
-بهبود ظاهری: **48.8% → 62.4% win rate** و **PF 1.16 → 1.96**.
-
-### ⛔ تصحیح مهم — این بهبود از آزمون معناداری رد شد
-
-جدول بالا با تست معناداری (`src/significance.py`) دوباره بررسی شد. نتیجه، ادعای قبلی را نقض می‌کند:
-
-| پیکربندی | n | win% | 95% CI | p (تصحیح‌شده) | حکم |
-|---|---|---|---|---|---|
-| فقط سیگنال اولیه | 2778 | 48.8% | [47%,51%] | — | — |
-| **آستانه‌ی ثابت 0.55** | **414** | **58.9%** | **[54%,64%]** | **0.0013** | **معنادار** |
-| آستانه‌ی کالیبره‌شده (ایده ۳) | 323 | 57.3% | [52%,63%] | 0.0376 | معنادار |
-| آستانه‌ی دینامیک BTC (ایده ۱+۲) | 87 | 60.9% | [50%,71%] | 0.1612 | **رد** |
-| فیلتر OOD (ایده ۴) | 322 | 57.5% | [52%,63%] | 0.0317 | معنادار |
-| **گیت کامل** | **85** | **62.4%** | **[51%,73%]** | **0.0931** | **رد** |
-
-و روی تایم‌فریم ۱ ساعته (۴ برابر داده، ۱۲٬۷۶۰ معامله) فقط **یک** ردیف جان سالم برد:
-
-| پیکربندی | n | win% | PF | p (تصحیح‌شده) | حکم |
-|---|---|---|---|---|---|
-| **آستانه‌ی ثابت 0.55** | **1002** | **55.4%** | **1.16** | **0.0034** | **معنادار** |
-| آستانه‌ی کالیبره‌شده | 892 | 51.3% | 1.15 | 0.8327 | رد |
-| آستانه‌ی دینامیک BTC | 127 | 59.1% | 1.17 | 0.1568 | رد |
-| فیلتر OOD | 840 | 50.1% | 1.00 | 0.9896 | رد |
-| گیت کامل | 105 | 57.1% | **0.98** | 0.4410 | رد |
-
-**نتیجه‌گیری:** آن ۶۲٫۴٪ نویز بود. سه شاهد مستقل:
-
-۱. **بازه‌ی اطمینان [51%, 73%]** — نقطه‌ی سربه‌سر ۵۰٫۲٪ است، یعنی بازه تقریباً به سربه‌سر می‌چسبد.
-۲. **با ۸ فولد به‌جای ۵**: گیت کامل به ۵۳٫۹٪ و **PF 0.94** (زیان‌ده) سقوط می‌کند.
-۳. **روی ۱ ساعته**: گیت کامل **PF 0.98** می‌دهد — بعد از هزینه زیان‌ده، در حالی که win rate آن ۵۷٪ است.
-
-مورد ۳ همان تله‌ای است که از ابتدا هشدار داده شده بود: **win rate بالا با PF زیر ۱ هم‌زمان ممکن است**.
-
-⚠️ **همچنین `corr(p_win, label)` روی ۱ ساعته به ۰٫۰۳۲ افت کرد** (از ۰٫۰۸۲ روی ۴ ساعته). داده‌ی بیشتر قدرت پیش‌بینی را بالا نبرد — یعنی سیگنال ۴ ساعته هم عمدتاً نویز بوده و تخمین ۰٫۰۸۲ روی نمونه‌ی کوچک‌تر خوش‌بینانه بود.
-
-**تنها چیزی که واقعاً باقی ماند:** آستانه‌ی ثابت ۰٫۵۵ — ساده‌ترین گزینه، روی هر دو تایم‌فریم و هر تعداد فولد معنادار، با ۱٬۰۰۲ معامله (نه ۸۵). سه ایده‌ی پیچیده‌تر (کالیبراسیون، رژیم BTC، فیلتر OOD) در حجم نمونه‌ی بزرگ‌تر از بین رفتند.
-
-### ۸. ریشه‌ی واقعی مشکل: هزینه‌ی معامله، نه مدل
-
-سه سیگنال اولیه‌ی جدید با منطق اقتصادی متفاوت ساخته شد (`src/labeling.py`):
-
-| سیگنال | منطق |
-|---|---|
-| `vol_breakout` | شکست فقط وقتی نوسان **فشرده** است (اکثر شکست‌ها در بازار پرنوسان کاذب‌اند) |
-| `trend_pullback` | خرید اصلاح **درون** روند صعودی (نه خلاف روند) |
-| `range_fade` | فِید لبه‌ی باند فقط وقتی نوسان **منقبض** است |
-
-سپس ۵ سیگنال × ۵ هندسه‌ی بَریِر = **۲۵ ترکیب** با آزمون معناداری اجرا شد. نتیجه:
-
-```
-        signal  pt  sl  base_n  base_wr  base_pf  base_exp   base_p
-  vol_breakout 2.0 1.0    3223   36.9%     0.84   -0.251%   0.9995
-    range_fade 2.0 2.0    3924   51.6%     0.88   -0.259%   1.0000
-      breakout 2.0 2.0    6563   51.7%     0.87   -0.296%   1.0000
-     reversion 2.0 1.0    3220   34.0%     0.74   -0.566%   1.0000
-```
-
-**هر ۲۵ ترکیب انتظار ریاضی منفی دارد. `base_p ≈ ۱٫۰۰` یعنی صفر شاهد برای لبه.**
-
-اما تفکیک هزینه، تصویر واقعی را نشان می‌دهد:
-
-| | مقدار |
-|---|---|
-| لبه‌ی **خام** بهترین سیگنال (`vol_breakout` 2:1) | **+۰٫۱۴۹٪** per trade |
-| هزینه‌ی فرض‌شده (۰٫۱٪ کارمزد + ۰٫۱٪ لغزش، دو طرف) | **−۰٫۴۰۰٪** |
-| نتیجه‌ی خالص | **−۰٫۲۵۱٪** |
-
-**۱۹ ترکیب از ۲۵ لبه‌ی خام مثبت دارند — ولی هزینه ۲٫۷ برابر بزرگ‌ترین لبه است.**
-
-حداکثر هزینه‌ی قابل تحمل: **۰٫۱۴۹٪ رفت‌وبرگشت** = ۰٫۰۷۴٪ هر طرف.
-
-**این توضیح می‌دهد چرا هیچ‌کدام از کارهای ML جواب نداد.** مدل روی سیگنالی کار می‌کرد که لبه‌ی خامش از هزینه کوچک‌تر بود. فیلتر کردن معامله‌های بد کمک می‌کند، ولی وقتی هر معامله ۰٫۴٪ هزینه دارد و بهترین لبه ۰٫۱۵٪ است، **هیچ فیلتری نجاتش نمی‌دهد** — این حساب است، نه کیفیت مدل.
-
-**مسیرهای واقعی از این نقطه (به ترتیب بازده):**
-
-۱. **کاهش هزینه** — تنها راهی که ریاضیات را برمی‌گرداند:
-   - سفارش **limit/maker** به‌جای market (بایننس: ۰٫۰۲٪ maker با BNB در مقابل ۰٫۱٪ taker) → هزینه به ~۰٫۰۸٪ می‌رسد که **زیر** لبه‌ی ۰٫۱۴۹٪ است
-   - نگه‌داری طولانی‌تر (`--max-holding` بزرگ‌تر): هزینه ثابت است، پس لبه‌ی بزرگ‌تر per trade آن را می‌پوشاند
-
-۲. **هندسه‌ی بَریِر بزرگ‌تر** — `pt/sl = 4:2` یا `6:3`. حرکت بزرگ‌تر = هزینه‌ی نسبی کمتر. توجه: تعداد معامله کم می‌شود.
-
-۳. **رها کردن ۴ ساعته برای این استراتژی.** لبه‌ی ۰٫۱۵٪ در تایم‌فریم ۴ ساعته با هزینه‌ی خرده‌فروشی قابل استخراج نیست. تایم‌فریم روزانه لبه‌ی per-trade بزرگ‌تری دارد.
-
-⛔ **کاری که نباید کرد:** افزودن فیچر، مدل، یا knob دیگر. مشکل در لایه‌ی مدل نیست.
-
-#### تأییدِ آزمایشی فرضیه‌ی هزینه
-
-سیگنال `vol_breakout` با `pt/sl = 2.0/1.0` روی ۱۰ ارز، **فقط با تغییر هزینه** (همان داده، همان مدل، همان ۳٬۲۲۳ معامله، همان ۳۶٫۹٪ win rate):
-
-| هزینه‌ی رفت‌وبرگشت | PF سیگنال خام | PF با گیت کامل | بازده گیت |
-|---|---|---|---|
-| ۰٫۴۰٪ (taker، فرض قبلی) | **0.90** | **0.99** | −۱٪ |
-| ۰٫۲۰٪ | 1.03 | 1.12 | +۹٪ |
-| **۰٫۰۸٪ (maker + لغزش کم)** | **1.13** | **1.21** | **+۱۵٫۵٪** |
-
-win rate در هر سه ردیف **دقیقاً یکسان** است (۳۶٫۹٪ خام / ۴۰٫۳٪ گیت). تنها متغیر هزینه است. این تعریفِ دقیقِ «مشکل در لایه‌ی مدل نیست» است.
-
-و در هزینه‌ی maker، سیگنال خام **به‌تنهایی** معنادار می‌شود (p تصحیح‌شده = ۰٫۰۰۰۱، ۳٬۲۲۳ معامله) — یعنی برای اولین بار در این پروژه یک لبه‌ی واقعی و آماری معتبر داریم که به مدل هم وابسته نیست.
-
-نکته‌ی مهم درباره‌ی نقطه‌ی سربه‌سر: با `pt/sl = 2:1` سربه‌سر **۳۳٪** است، نه ۵۰٪. پس ۳۶٫۹٪ win rate یک استراتژی برنده است. این همان نکته‌ی بخش ۶ است — **win rate بدون هندسه‌ی بَریِر بی‌معناست**.
-
-⚠️ **هشدار اجرایی:** هزینه‌ی ۰٫۰۸٪ فرض می‌کند سفارش‌های **maker** پُر می‌شوند. یک شکست breakout با limit order ممکن است اصلاً پر نشود (adverse selection) — یعنی معامله‌های برنده را از دست می‌دهید و بازنده‌ها را می‌گیرید. این عدد **سقف خوش‌بینانه** است و اعتبارسنجی واقعی آن نیاز به شبیه‌سازی صف سفارش یا تست زنده با حجم کوچک دارد.
-
-شاهد اینکه ایده‌ها واقعاً کار می‌کنند (از خروجی همین اجراها):
-- **۵ فیچر از ۱۰ فیچر مهم مدل، فیچرهای رژیم BTC هستند** (`btc_above_sma`, `btc_ret_5_aligned`, `btc_vol`, `btc_alignment`, `btc_alignment_strength`) — ایده ۱ تأیید شد.
-- معامله‌های هم‌جهت با BTC: win rate **53.4%** / خلاف جهت: **48.9%** — ایده ۲ تأیید شد.
-- مسیرهای leaf آشنا: **49.5%** / مسیرهای نادر: **41.1%** — ایده ۴ تأیید شد؛ مدل در شرایط ناشناخته واقعاً بدتر عمل می‌کند.
-
-⚠️ **هشدار صداقت علمی:** `corr(p_win, label)` حدود **۰٫۰۸** است. یعنی قدرت رتبه‌بندی مدل واقعی ولی **ضعیف** است. با تعداد فولد کم، بخشی از بهبود بالا می‌تواند شانس باشد — به‌همین دلیل ستون «تعداد» همیشه کنار win rate چاپ می‌شود. عدد ۸۵ معامله برای نتیجه‌گیری قطعی کم است. توجه کنید که گیت کامل حجم معامله را از ۲٫۷۷۸ به ۸۵ می‌رساند (~۳٪) — این «انتخاب‌گری» است، نه جادو: مدل بیشترِ فرصت‌ها را رد می‌کند تا کیفیت باقی‌مانده بالا برود.
-
-استراتژی cross-sectional (رتبه‌بندی ارزها نسبت به هم با استفاده از امتیاز مدل، long-short بین بهترین و بدترین):
-```bash
-python scripts/backtest_cross_sectional.py --data kraken_BTC_USDT_4h.csv kraken_ETH_USDT_4h.csv kraken_SOL_USDT_4h.csv --long-short
-```
-
-برای افزودن فیچر نرخ فاندینگ (داده‌ی جایگزین، مستقل از قیمت/حجم) از آرشیو عمومی بایننس:
-```bash
-python scripts/download_funding_vision.py --symbol BTCUSDT --start-date 2022-01-01 --end-date 2026-01-01 --out kraken_BTC_USDT_4h_funding.csv
-python scripts/train_meta_ml.py --use-funding --data kraken_BTC_USDT_4h.csv ...
-```
-
-### ۹. شبیه‌سازی پر شدن سفارش Maker — آیا لبه‌ی ۰٫۰۸٪ واقعاً قابل‌دسترسی است؟
-
-بخش ۸ هزینه‌ی ۰٫۰۸٪ (maker + لغزش کم) را با یک هشدار اجرایی بست: آن عدد فرض می‌کند سفارش limit همیشه پر می‌شود، در حالی که یک شکست breakout با سفارش passive ممکن است اصلاً پر نشود — و این می‌تواند دقیقاً معامله‌های برنده را از دست بدهد و بازنده‌ها را بگیرد (adverse selection). این بخش آن فرض را با یک شبیه‌سازی صف واقعی جایگزین می‌کند، نه یک عدد ثابت.
-
-**روش (`src/execution.py`، `scripts/backtest_maker_fill.py`):** به‌جای فرض ورود آنی روی close کندل سیگنال، یک سفارش limit passive به فاصله‌ی `0.15 × ATR` بهتر از قیمت سیگنال گذاشته می‌شود (برای long، پایین‌تر از قیمت — دقیقاً جهتی که maker fee را می‌گیرد ولی نیازمند برگشت قیمت است). سفارش تا ۳ کندل بعد باز می‌ماند؛ اگر high/low هیچ کندلی آن قیمت را لمس نکند، سفارش کنسل می‌شود و **هیچ معامله‌ای ثبت نمی‌شود** — نه فرض می‌شود پر شده. این شبیه‌سازی روی داده‌ی OHLC است، نه order book واقعی، پس یک **سقف خوش‌بینانه** است (لمس‌شدن قیمت تضمین پر شدن در صف واقعی نیست).
-
-خروجی واقعی روی همان سیگنال (`vol_breakout`, pt/sl=2.0/1.0)، ۱۰ ارز، داده‌ی تازه دانلود‌شده تا ۲۰۲۶-۰۷-۳۱ (n اینجا با ۳۲۲۳ بخش ۸ یکی نیست چون آن عدد از یک منبع داده‌ی به‌روزتر—تا ۲۰۲۶-۰۸-۳۰—می‌آمد؛ همین‌جا برای مقایسه‌ی taker/maker به‌طور داخلی سازگار است):
-
-| | n | win rate | PF | exp/trade | p |
-|---|---|---|---|---|---|
-| TAKER (فرض قبلی: پر شدن آنی) | 4938 | 36.4% | 0.85 | −0.278% | 1.0000 |
-| **MAKER (شبیه‌سازی صف، فقط پرشده‌ها)** | **4474** | **36.9%** | **1.07** | **+0.112%** | **0.0300** |
-
-نرخ پر شدن: **۹۰٫۶٪** (۴۴۷۴ از ۴۹۳۸ کاندید، ظرف ۳ کندل).
-
-**چک adverse selection** (نرخ برد واقعی هر گروه، روی مبنای taker):
-
-| گروه | n | نرخ برد would-be |
-|---|---|---|
-| پرشده | 4474 | 31.5% |
-| پرنشده | 464 | **83.8%** |
-
-فاصله **۵۲٫۳٪+** — یعنی همان چیزی که هشدار بخش ۸ پیش‌بینی کرده بود واقعی است: معامله‌هایی که پر نمی‌شوند، به‌طرز چشمگیری بیشتر برنده بودند. لبه‌ی maker یک توهم کامل نیست (بعد از حذف آن ۹٫۴٪ که پر نشدند، همچنان PF>1 و مثبت است)، ولی بخشی از قدرتش دقیقاً به همان دلیلی که هشدار داده شده بود کم می‌شود.
-
-**بررسی robustness** (۳ پیکربندی دیگر روی همان pool، بدون تغییر داده یا سیگنال — فقط پارامترهای صف):
-
-| queue_timeout | offset_mult | fill rate | PF | p |
-|---|---|---|---|---|
-| 1 کندل | 0.15 ATR | 84.5% | 1.07 | 0.0295 |
-| 6 کندل | 0.15 ATR | 93.7% | 1.07 | 0.0165 |
-| 3 کندل | 0.30 ATR | 80.8% | 1.10 | 0.0055 |
-
-PF در هر ۴ پیکربندی (پیش‌فرض + این ۳ تا) بین ۱٫۰۷ تا ۱٫۱۰ پایدار است — این بخش تشویق‌کننده است. اما همه‌ی این ۴ عدد p زیر ۰٫۰۵ هستند به این معنا نیست که لبه ۴ بار مستقل تأیید شده؛ طبق همان منطق `deflated_pvalue` بخش ۷، وقتی ۴ پیکربندی را بررسی می‌کنید باید تصحیح چندآزمونی اعمال شود: با بدترین p (۰٫۰۳) و ۴ پیکربندی، p تصحیح‌شده = **۰٫۱۱۵** — یعنی **رد** در آستانه‌ی ۰٫۰۵.
-
-**نتیجه‌گیری صادقانه:** لبه‌ی maker با پیکربندی پیش‌فرض (یک تصمیم پیشینی، نه انتخاب‌شده بعد از دیدن نتیجه) معنادار است (p=0.03)، ولی این معناداری خیلی ضعیف‌تر از p=0.0001 است که بخش ۸ با فرض «پر شدن همه» گزارش کرده بود، و وقتی robustness چند پیکربندی را هم حساب کنیم دیگر به‌وضوح رد نمی‌شود. این دقیقاً همان چیزی است که بخش ۸ به‌عنوان «سقف خوش‌بینانه، منتظر شبیه‌سازی صف یا تست زنده» توصیف کرده بود — شبیه‌سازی الان انجام شد، نتیجه یک تأیید کامل نیست و یک رد کامل هم نیست. **قدم واقعی بعدی، بک‌تست بیشتر نیست: تست زنده با حجم کوچک روی صف سفارش واقعی صرافی، چون هیچ شبیه‌سازی مبتنی بر OHLC نمی‌تواند جای داده‌ی واقعی order book را بگیرد.**
-
-اجرا روی داده‌ی خودتان:
 ```bash
 python scripts/backtest_maker_fill.py \
   --data binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv ... \
   --signal vol_breakout --pt-mult 2.0 --sl-mult 1.0
 ```
 
-### ۱۰. تایم‌فریم روزانه — فرضیه رد شد
+Other strategies (grid trading, statistical-arbitrage pairs, cross-sectional
+ranking, order-flow imbalance, market making, live paper-testing) each have
+their own script under `scripts/` — see the project layout above, or
+`docs/RESEARCH_LOG.md` for the exact command used in each experiment.
 
-بخش ۸ پیشنهاد کرده بود «رها کردن ۴ ساعته... تایم‌فریم روزانه لبه‌ی per-trade بزرگ‌تری دارد» به‌عنوان یک مسیر جایگزین برای فرار از مسئله‌ی هزینه، بدون اندازه‌گیری آن. این بخش همان فرضیه را با همان سیگنال و هندسه (`vol_breakout`, pt/sl=2.0/1.0) روی داده‌ی روزانه‌ی همان ۱۰ ارز اندازه می‌گیرد (زیرساخت pooling/purge این پروژه از قبل عمومی است — عرض کندل به‌صورت خودکار تشخیص داده می‌شود، نه هاردکد ۴ ساعت).
+## Testing
 
-| تایم‌فریم | n | TAKER PF | MAKER PF (شبیه‌سازی‌شده، پر شدن ۹۲٫۳٪) | MAKER p |
-|---|---|---|---|---|
-| ۴ ساعته | 4938 | 0.85 | 1.07 | 0.0300 |
-| **روزانه** | **826** | **0.85** | **0.96** | **0.6992** |
-
-**فرضیه رد شد.** لبه‌ی per-trade روزانه بزرگ‌تر نیست — عملاً یکسان یا کمی بدتر از ۴ ساعته است، و حتی با هزینه‌ی خوش‌بینانه‌ی maker هم PF زیر ۱ می‌ماند (زیان‌ده) و p=0.70 به‌هیچ‌وجه معنادار نیست. علاوه بر این، ۲۰ کندل lookback برای Donchian/squeeze روی داده‌ی روزانه یعنی سیگنال‌های کاندید به‌شدت کمیاب‌اند: کل ۶٫۵ سال داده‌ی ۱۰ ارز فقط ۸۲۶ کاندید تولید کرد (در مقابل ۴۹۳۸ در ۴ ساعته) — کمتر از حد ۲۰۰ معامله‌ی walk-forward که بخش ۶ به‌عنوان حداقل برای هر نتیجه‌گیری قطعی تعیین کرده بود، آن‌هم قبل از هر تقسیم walk-forward.
-
-⚠️ این آزمایش فقط یک ترکیب سیگنال/هندسه (همانی که در ۴ ساعته لبه داشت) را روی روزانه تست کرد، نه یک جاروب کامل. ممکن است هندسه‌ی بَریِر بزرگ‌تر (مثلاً pt/sl=4:2) یا سیگنال دیگری روی روزانه بهتر عمل کند — ولی آن یک فرضیه‌ی جدید و تست‌نشده است، نه چیزی که این اندازه‌گیری پشتیبانی کند. آنچه اندازه‌گیری شد این بود: **مسیر ساده‌ی «همین استراتژی را روی تایم‌فریم بزرگ‌تر ببر» کار نکرد.**
-
-اجرا روی داده‌ی خودتان:
 ```bash
-python scripts/backtest_maker_fill.py \
-  --data binance_ETH_USDT_1d.csv binance_SOL_USDT_1d.csv ... \
-  --signal vol_breakout --pt-mult 2.0 --sl-mult 1.0
+pytest
 ```
 
-### ۱۱. سیگنال OBI (order-flow) — تلاش برای یک منبع اطلاعاتی متفاوت، نتیجه: بدون لبه
-
-بخش‌های ۹ و ۱۰ هر دو دور یک محور می‌چرخیدند: هزینه و پارامتر. اما مشکل بنیادی‌تری هم هست — **هر پنج سیگنال این پروژه (`breakout`, `reversion`, `vol_breakout`, `trend_pullback`, `range_fade`) فقط از OHLC ساخته می‌شوند**، یعنی همان داده‌ی عمومی که هر کوانت دیگری هم می‌بیند و می‌تواند خیلی قبل از بسته‌شدن یک کندل ۴ ساعته آربیتراژش کند. این بخش یک منبع اطلاعاتی واقعاً متفاوت را امتحان می‌کند: عدم‌تعادل صف خرید/فروش (Order Book Imbalance) از داده‌ی لحظه‌ای order book، نه از تاریخچه‌ی قیمت.
-
-**زیرساخت:** `scripts/download_l2_obi.py` از قبل در پروژه بود ولی فقط به‌عنوان یک فیچر کمکی ML استفاده می‌شد. حالا `obi_momentum_entries` (`src/labeling.py`) آن را به یک **سیگنال اولیه‌ی مستقل** تبدیل می‌کند: وقتی OBI از صدک بالای بازه‌ی غلتان خودش عبور می‌کند (فشار خرید غالب) → long، وقتی از صدک پایین عبور می‌کند → short. رفرنس: Cont, Kukanov & Stoikov (2014), «The Price Impact of Order Book Events».
-
-**داده:** چون آرشیو bookTicker بایننس فقط برای futures هست (نه spot)، `download_klines_vision.py` یک فلگ `--market futures` گرفت تا قیمت‌ها با همان ابزار (نه spot) جفت شوند — وگرنه سیگنال order-flow futures با قیمت یک ابزار دیگر (spot) تست می‌شد. داده: BTCUSDT futures، ۵ دقیقه‌ای، ۲۰۲۳-۱۱-۰۱ تا ۲۰۲۴-۰۲-۱۵ (~۴٫۵ ماه، ۵۲۶۱ کاندید).
-
-نتیجه‌ی خام (بدون هزینه، pt/sl=2.0/1.0، lookback=288 کندل=۱ روز، max-holding=۱۸ کندل=۹۰ دقیقه):
-
-| جهت | n | win rate | breakeven | mean ret خام | p |
-|---|---|---|---|---|---|
-| فشار خرید غالب → long (فرضیه‌ی اصلی) | 5261 | 34.8% | 33.3% | −0.002% | 0.673 |
-| فشار خرید غالب → short (چک جهت معکوس) | 5261 | 35.2% | 33.3% | +0.001% | 0.398 |
-
-**هیچ لبه‌ای در هیچ جهتی نیست.** win rate در هر دو جهت عملاً روی نقطه‌ی سربه‌سر نشسته (۳۳٫۳٪) و mean return خام (حتی قبل از هر هزینه‌ای) عملاً صفره — این یک coin flip آماری‌ست، نه لبه‌ی ضعیف. (با هزینه‌ی taker معمول ۰٫۴٪ حتی بدتر می‌شود چون میانگین سود خام ~۰٫۲۹٪ از خود هزینه کوچک‌تر است — یعنی روی کندل ۵ دقیقه‌ای، هزینه‌ی retail معمول از اندازه‌ی حرکت قیمت هم بزرگ‌تر است؛ خودش یک یافته‌ی ساختاری دیگر است.)
-
-⚠️ **این چک جهت (long بودن فرضیه‌ی اصلی در برابر short) یک آزمایش اصولی بود، نه یک knob دیگر برای دنبال‌کردن p<0.05** — تنها راه فهمیدن اینکه آیا فرضیه‌ی جهت اشتباه بود یا اصلاً چیزی برای پیدا کردن نیست. هر دو جهت رد شدند، پس ادامه‌ی جستجو با تنظیم پارامترهای دیگر (quantile، lookback) دقیقاً همان p-hacking ای می‌شد که بخش ۹ نشان داد معناداری را از بین می‌برد.
-
-**تفسیر محتمل، نه یک نتیجه‌ی اثبات‌شده:** ادبیات order-flow-imbalance اثر را در افق **ثانیه‌ها** پیش‌بینی می‌کند، نه دقیقه‌ها. `download_l2_obi.py` عدم‌تعادل را روی کل بازه‌ی ۵ دقیقه‌ای **جمع** می‌زند (برای حل مشکل mean-of-means bias)، که می‌تواند دقیقاً همان سیگنال سریع را قبل از رسیدن به این چارچوب barrier محو کند. تست فرضیه‌ی واقعی ادبیات نیاز به داده‌ی sub-minute و holding period به‌مراتب کوتاه‌تر دارد — که زیرساخت متفاوتی (backtesting سبک HFT) می‌طلبد، نه یک تنظیم پارامتر دیگر روی همین چارچوب.
-
-**نتیجه‌گیری:** این آزمایش وجود لبه‌ی OBI را به‌طور کلی رد نمی‌کند؛ فقط همین عملیاتی‌سازی مشخص (تجمیع ۵ دقیقه‌ای، پنجره‌ی صدک ۱ روزه، هندسه‌ی ۲:۱) را روی BTC futures در این بازه رد می‌کند. کد و زیرساخت (سیگنال، دانلودر futures، پیوند `--obi-data`) برای یک آزمایش سطح-tick در آینده باقی می‌ماند.
-
-اجرا روی داده‌ی خودتان:
-```bash
-python scripts/download_klines_vision.py --symbol BTCUSDT --timeframe 5m --market futures --start-date 2023-11-01 --end-date 2024-02-15
-python scripts/download_l2_obi.py --symbol BTCUSDT --start-date 2023-11-01 --end-date 2024-02-15 --timeframe 5m
-python scripts/backtest_maker_fill.py \
-  --data binance_futures_BTC_USDT_5m.csv --obi-data binance_l2obi_BTCUSDT_5m.csv \
-  --signal obi_momentum --lookback 288 --pt-mult 2.0 --sl-mult 1.0 --max-holding 18
-```
-
-### ۱۱-ب. تست سطح-tick — لبه واقعی بود، فقط در افق اشتباهی دنبالش می‌گشتیم
-
-بخش ۱۱ حدس زده بود که سیگنال OBI با تجمیع ۵ دقیقه‌ای محو شده باشد چون ادبیات آن را در افق **ثانیه‌ها** توصیف می‌کند. این بخش همان فرضیه را واقعاً تست می‌کند، نه فقط حدس می‌زند.
-
-**زیرساخت جدید:** پایین‌تر از ۱ دقیقه هیچ آرشیو kline ای وجود ندارد، پس `download_l2_obi.py` حالا مستقیماً از خود تیک‌های bookTicker یک کندل OHLC (بر مبنای mid-price) هم می‌سازد — نیازی به دانلود جدا نیست. تایم‌فریم‌های زیر ۱ دقیقه (`1s`, `5s`, `10s`, `30s`) اضافه شد.
-
-**داده:** BTCUSDT futures، ۵ ثانیه‌ای، ۲۰۲۴-۰۱-۱۵ تا ۰۱-۲۸ (۱۴ روز، ۲۴۱٬۹۲۰ کندل). سیگنال: همان `obi_momentum`، با lookback=720 کندل (۱ ساعت — به افق سریع‌تر تنظیم شد، نه ۱ روز) و pt/sl=2.0/1.0، max-holding=24 کندل (**۲ دقیقه**).
-
-نتیجه‌ی خام (بدون هزینه):
-
-| | n | win rate | breakeven | mean ret خام | p |
-|---|---|---|---|---|---|
-| فشار خرید غالب → long (فرضیه‌ی اصلی) | 34473 | **47.9%** | 33.3% | +0.0035% | **0.0003** |
-| فشار خرید غالب → short (چک جهت معکوس) | 34473 | 31.7% | 33.3% | ~0.000% | 0.487 |
-
-این بار لبه **واقعی** است: جهت اصلی به‌شدت معنادار (p=0.0003 — قوی‌ترین عدد کل این پروژه)، جهت معکوس کاملاً null. تقسیم داده به دو نیمه‌ی ۷ روزه‌ی مستقل (بدون هیچ تنظیم پارامتری) هر دو را جداگانه معنادار نشان داد (نیمه‌ی اول: win 47.1%, p=0.0003 — نیمه‌ی دوم: win 48.7%, p=0.0003) — یعنی یک روز عجیب کل نتیجه را نمی‌سازد.
-
-**ولی: لبه اقتصادی نیست.** میانگین سود خام هر معامله‌ی برنده فقط **۰٫۰۲۳٪** است (میانگین ضرر ۰٫۰۱۴٪−، میانگین نگه‌داری ~۲۱ ثانیه). حتی هزینه‌ی **maker خوش‌بینانه‌ی بخش ۹ (۰٫۰۸٪)** — که خودش برای تایم‌فریم ۴ ساعته به‌سختی کافی بود — **بیش از سه برابر بزرگ‌تر از میانگین سود این استراتژی است.** هیچ سفارش limit/maker معمولی این را عبور نمی‌دهد؛ فقط market maker واقعی با rebate (نه فقط هزینه‌ی صفر، بلکه هزینه‌ی **منفی**) و اجرای کم‌تأخیر (colocated) می‌تواند نظری به سوددهی داشته باشد — که کاملاً بیرون از دامنه‌ی این پروژه (یک بک‌تستر retail-accessible) است.
-
-**نتیجه‌گیری نهایی این خط تحقیق:** حدس بخش ۱۱ درست بود — سیگنال OBI **واقعی و آماری معتبر** است، فقط در افقی (ثانیه‌ها) که تجمیع ۵ دقیقه‌ای آن را نابود می‌کرد. اما اندازه‌ی حرکت در آن افق (۰٫۰۲٪) به‌قدری کوچک است که هیچ ساختار هزینه‌ی این پروژه (retail taker یا حتی retail maker) نمی‌تواند آن را استخراج کند. این با یافته‌های بخش ۸-۱۰ فرق دارد: آنجا لبه با هزینه رقابت نزدیک داشت (~۰٫۱۵٪ در برابر ۰٫۰۸-۰٫۴۰٪)؛ اینجا لبه یک مرتبه‌ی بزرگی از حداقل هزینه‌ی قابل‌تصور کوچک‌تر است. جای درست این لبه یک زیرساخت market-making است، نه یک استراتژی جهت‌دار.
-
-اجرا روی داده‌ی خودتان:
-```bash
-python scripts/download_l2_obi.py --symbol BTCUSDT --start-date 2024-01-15 --end-date 2024-01-28 --timeframe 5s
-python scripts/backtest_maker_fill.py \
-  --data binance_l2obi_BTCUSDT_5s.csv --obi-data binance_l2obi_BTCUSDT_5s.csv \
-  --signal obi_momentum --lookback 720 --pt-mult 2.0 --sl-mult 1.0 --max-holding 24
-```
-
-### ۱۲. شبیه‌سازی زنده (Shadow Paper-Test) — بدون ریسک مالی، در حال جمع‌آوری نمونه
-
-بخش ۹ نتیجه‌ی مرزی داشت (p=0.03 با یک پیکربندی پیش‌فرض، ولی p=0.115 بعد از تصحیح چندآزمونی روی ۴ پیکربندی) چون شبیه‌سازی maker-fill آنجا فقط از OHLC تاریخی استفاده می‌کرد — یک سقف خوش‌بینانه، نه داده‌ی صف واقعی. این بخش همان فرضیه را با **quote های زنده‌ی واقعی** چک می‌کند، بدون ارسال هیچ سفارش واقعی و بدون هیچ ریسک مالی.
-
-**زیرساخت (`src/paper_trading.py`, `scripts/paper_test_live.py`):** هر ۴ ساعت روی هر ۱۰ ارز چک می‌کند که سیگنال `vol_breakout` روی کندل تازه‌بسته‌شده فایر شده یا نه. اگر فایر شد، دقیقاً مثل `simulate_maker_fills` بخش ۹ یک سفارش limit فرضی قیمت‌گذاری می‌کند و با poll کردن قیمت زنده (نه یک کندل ۴ ساعته‌ی تاریخی) چک می‌کند که واقعاً پر می‌شد یا نه — این دقیق‌تر از شبیه‌سازی OHLC است چون هر بار poll می‌کند، نه فقط یک بار در پایان هر کندل.
-
-**نکته‌ی زیرساختی:** به‌جای Binance مستقیم از Kraken استفاده شد، چون API زنده‌ی Binance از این محیط HTTP 451 (محدودیت جغرافیایی) برمی‌گرداند — دقیقاً همان محدودیتی که `scripts/download_data.py` قبلاً برایش مستند شده بود.
-
-وضعیت در `data/paper_trades.csv` ذخیره می‌شود (gitignored). چون سیگنال `vol_breakout` نادر است (~۰٫۲ سیگنال/روز/ارز، طبق بخش ۹)، جمع‌آوری نمونه‌ی معنادار **هفته‌ها** طول می‌کشد؛ این بخش با نتیجه‌ی واقعی، وقتی نمونه‌ی کافی جمع شد، به‌روزرسانی خواهد شد.
-
-اجرای دستی:
-```bash
-python scripts/paper_test_live.py
-```
-
-### ۱۳. Market-Making — رد شد، ولی دلیل رد شدنش آموزنده است
-
-بخش ۱۱-ب یک لبه‌ی آماری واقعی در OBI پیدا کرد (p=0.0003) که برای معامله‌ی جهت‌دار خیلی کوچک بود (۰٫۰۲۳٪ در برابر هزینه‌ی حتی maker خوش‌بینانه). راه‌حل نظری بدیهی: به‌جای شرط‌بستن روی جهت (که همیشه با هزینه می‌جنگد)، **هر دو طرف را quote کنید** و اسپرد را بگیرید — market maker باشید، نه taker. این بخش این ایده را با داده‌ی واقعی تست می‌کند، نه فقط پیشنهادش می‌دهد.
-
-**زیرساخت:** `download_l2_obi.py` حالا آخرین bid/ask **واقعی** هر بار را هم نگه می‌دارد (`bid_close`/`ask_close`, نه فقط mid مشتق‌شده) — یک بک‌تست market-making به اسپرد واقعی نیاز دارد، نه یک قیمت میانگین‌گیری‌شده. `src/market_making.py` یک شبیه‌ساز quote/fill/inventory بار-به-بار است با دو skew مستقل: inventory (کنترل ریسک کلاسیک — هرچه پوزیشن یک‌طرفه‌تر شود، هر دو quote به‌سمت flat متمایل می‌شوند) و OBI (quote ها به سمت جهتی که سیگنال OBI پیش‌بینی می‌کند متمایل می‌شوند).
-
-**چک واقعیت اول:** میانگین اسپرد واقعی top-of-book روی BTC futures فقط **۰٫۰۰۰۲٪** قیمت است — یک مرتبه‌ی بزرگی **کوچک‌تر** از هزینه‌ی maker ۰٫۰۲٪ که در کل این پروژه فرض شده. یعنی صرفاً «join کردن بهترین قیمت» یک بازنده‌ی تضمینی است. به همین دلیل شبیه‌ساز quote را بر مبنای نوسان اخیر (نه اسپرد خام) قیمت‌گذاری می‌کند — دادن فرصت پرشدن کمتر در ازای گرفتن اسپردی که واقعاً از هزینه بیشتر باشد.
-
-**نتیجه‌ی واقعی** (همان ۱۴ روز داده‌ی بخش ۱۱-ب، ۵ ثانیه‌ای، `k_spread` از هزینه انتخاب شد نه از دیدن نتیجه — نیم‌اسپرد ۳ برابر میانگین بازه‌ی هر بار، یعنی ~۲ برابر هزینه‌ی رفت‌وبرگشت):
-
-| پیکربندی | round trips | total PnL |
-|---|---|---|
-| بدون skew (naive symmetric) | 6747 | **−۱۴۴٬۹۸۰** |
-| + inventory skew | 7904 | −۱۶۷٬۵۷۳ |
-| + inventory + OBI skew | 7834 | −۱۶۲٬۱۶۴ |
-
-فاجعه‌بار. تشخیص: inventory تقریباً همیشه روی سقف (±۵) پین می‌شود (std=3.43 — یعنی عملاً هیچ‌وقت نزدیک صفر نمی‌ماند)، و چک forward-return تأیید می‌کند این adverse selection واقعی است نه باگ: میانگین بازده ۱ دقیقه‌ای بعد از هر fill خرید، منفی‌تر از میانگین بی‌قید-و-شرط بازار است — یعنی درست وقتی پر می‌شویم که بازار در حال برگشت به ضررمان است.
-
-**آیا فقط پهن‌تر کردن quote حلش می‌کند؟** جاروب `k_spread` (۳→۶→۱۰→۲۰) زیان را به‌طور یکنواخت کم می‌کند (−۱۴۵k → −۳۴k → −۱۱٫۶k → −۱۴k) ولی هیچ‌وقت مثبت نمی‌شود و حدود −۱۱ تا −۱۴ هزار **کف** می‌گیرد. در نقطه‌ی k_spread=10، inventory skew واقعاً کمک می‌کند (زیان را نصف می‌کند: −۱۱٫۶k → −۵٫۲k) — کنترل ریسک کلاسیک همان‌طور که انتظار می‌رفت کار می‌کند. ولی OBI skew کمی بدتر می‌کند (−۶٫۴k) — یک یافته‌ی منفی واقعی، نه چیزی که پنهان شود.
-
-**ریشه‌ی واقعی مشکل، نه یک باگ:** quote ها فقط یک‌بار در هر بار (۵ ثانیه) به‌روز می‌شوند، بر مبنای close بار قبل — یعنی برای کل آن پنجره «قدیمی» می‌مانند. در بازار با ادامه‌ی مومنتوم (که در کریپتو معمول است)، این یعنی سفارش‌ها دقیقاً همان لحظه‌ای پر می‌شوند که قیمت از سطح quote رد شده و به مسیرش ادامه می‌دهد — همان چیزی که market maker های واقعی با requote میلی‌ثانیه‌ای از آن فرار می‌کنند. **این چارچوب بک‌تست بار-به-بار (که برای استراتژی‌های جهت‌دار hold-to-barrier این پروژه کاملاً درست کار می‌کرد) برای market-making ابزار درستی نیست** — market-making ذاتاً یک استراتژی پیوسته-در-زمان است، نه یک تصمیم گسسته در هر بار.
-
-**نتیجه‌گیری:** «فقط طرف مقابل باشید» یک راه‌حل ساده برای مسئله‌ی هزینه نیست. هم لبه‌ی جهت‌دار OBI (بخش ۱۱-ب) و هم market-making اینجا به یک دیوار مشترک برخوردند: هرچه به سمت افق‌های سریع‌تر (که واقعاً edge دارند) بروید، نیاز به زیرساخت اجرای پیوسته و بلادرنگ پیدا می‌کنید — چیزی که هیچ بک‌تست بار-محور (چه ۴ ساعته چه ۵ ثانیه‌ای) نمی‌تواند صادقانه شبیه‌سازی کند. قدم بعدیِ واقعی این خط تحقیق، اگر ادامه پیدا کند، ساخت زیرساخت quote پیوسته‌ی سطح-tick است، نه بک‌تست بار-محور بیشتر.
-
-اجرا روی داده‌ی خودتان:
-```bash
-python scripts/backtest_market_making.py --data binance_l2obi_BTCUSDT_5s.csv --k-spread 10.0
-```
-
-## ساختار پروژه
-
-```
-trading-bot/
-├── scripts/
-│   ├── download_data.py               # دانلود داده‌های OHLCV از طریق CCXT
-│   ├── download_klines_vision.py      # دانلود تاریخچه‌ی عمیق OHLCV از آرشیو بایننس (۲۰ برابر کراکن)
-│   ├── merge_klines.py                # ادغام ایمن CSV تازه در داده‌ی موجود (با بررسی هم‌خوانی محل اتصال)
-│   ├── sweep_barrier_geometry.py      # جاروب هندسه‌ی حد سود/ضرر: کجا win rate بالا واقعاً سودده است
-│   ├── download_funding_vision.py     # دانلود تاریخچه‌ی نرخ فاندینگ از آرشیو عمومی بایننس
-│   ├── download_l2_obi.py             # دانلود عدم‌تعادل صف order book (futures bookTicker) — سیگنال OBI، بخش ۱۱
-│   ├── find_pairs.py                  # کشف جفت‌ارزهای هم‌بسته (Cointegration Test)
-│   ├── backtest_pairs.py              # بک‌تست آربیتراژ آماری
-│   ├── train_ml.py                    # استخراج فیچرهای پیشرفته با pandas-ta و آموزش XGBoost
-│   ├── backtest_ml.py                 # بک‌تست استراتژی XGBoost (پیش‌بینی مستقیم جهت)
-│   ├── train_meta_ml.py               # آموزش pool‌شده‌ی مدل Meta-Labeling (Triple-Barrier)
-│   ├── backtest_meta_ml.py            # بک‌تست تک‌ارزی مدل Meta-Labeling
-│   ├── backtest_meta_ml_walkforward.py# اعتبارسنجی walk-forward مدل Meta-Labeling
-│   ├── backtest_cross_sectional.py    # استراتژی رتبه‌بندی cross-sectional بین ارزها
-│   ├── backtest_maker_fill.py         # شبیه‌سازی پر شدن سفارش maker (بخش ۹) و آزمایش تایم‌فریم روزانه (بخش ۱۰)
-│   ├── paper_test_live.py             # شبیه‌سازی زنده‌ی maker-fill روی quote های واقعی، بدون ریسک مالی (بخش ۱۲)
-│   ├── backtest_market_making.py      # ابلیشن شبیه‌ساز market-making (بخش ۱۳)
-│   └── backtest_grid.py               # بک‌تست ربات Grid Trading
-├── src/
-│   ├── config.py               # تنظیمات پروژه و مسیرها
-│   ├── metrics.py              # محاسبه‌ی win rate استاندارد (بر اساس معامله‌ی بسته‌شده)
-│   ├── labeling.py             # سیگنال‌های اولیه‌ی rule-based و برچسب‌گذاری Triple-Barrier
-│   ├── execution.py            # شبیه‌سازی صف سفارش maker: پر شدن optimistic بر مبنای OHLC (بخش ۹)
-│   ├── paper_trading.py        # منطق state machine شبیه‌سازی زنده (بخش ۱۲)
-│   ├── market_making.py        # شبیه‌ساز quote/fill/inventory دو-طرفه با skew (بخش ۱۳)
-│   ├── regime.py               # ایده ۱: کانتکست رژیم بازار و فیچر btc_alignment
-│   ├── calibration.py          # ایده ۳: کالیبراسیون آستانه بر مبنای precision (جای F1)
-│   ├── novelty.py              # ایده ۴: تشخیص OOD با leaf-frequency (بدون مدل دوم)
-│   ├── gating.py               # ایده ۲: لایه‌ی تصمیم با آستانه‌ی دینامیک
-│   ├── significance.py         # آزمون معناداری: CI دقیق + permutation test + تصحیح چندآزمونی
-│   └── strategies/
-│       ├── pairs_trading.py   # منطق سیگنال‌های Pairs Trading (Z-Score)
-│       ├── ml_strategy.py     # منطق سیگنال‌دهی مدل ML
-│       └── grid_trading.py    # منطق شبکه‌بندی و معاملات پله‌ای Grid
-├── data/                      # داده‌های دانلود شده و مدل‌های ذخیره شده
-├── config.yaml                # فایل تنظیمات
-└── requirements.txt
-```
+96 tests covering signal generation, triple-barrier labeling, significance
+testing, maker-fill simulation, market-making mechanics, and the live
+paper-trading state machine.
