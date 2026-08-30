@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0, recenter_cooldown=0):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
@@ -11,6 +11,7 @@ class GridTradingStrategy:
         self.grid_type = grid_type
         self.adaptive_atr_period = adaptive_atr_period
         self.atr_multiplier = atr_multiplier
+        self.recenter_cooldown = recenter_cooldown
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -23,6 +24,7 @@ class GridTradingStrategy:
 
         start_price = df['close'].iloc[0]
 
+        # Pre-calculate ATR if adaptive to avoid NameError
         if self.adaptive_atr_period and self.adaptive_atr_period > 0:
             # Calculate ATR using pure Pandas
             high_low = df['high'] - df['low']
@@ -41,6 +43,7 @@ class GridTradingStrategy:
             # Ensure lower bound is positive
             lower_bound = max(1e-9, lower_bound)
         else:
+            atr = None
             lower_bound = start_price * (1 - self.grid_range_pct/2)
             upper_bound = start_price * (1 + self.grid_range_pct/2)
 
@@ -83,6 +86,12 @@ class GridTradingStrategy:
         if cash < 0:
             raise ValueError("Grid allocation error: Starting cash is negative.")
 
+        # Pre-compute ATR if adaptive
+        if self.adaptive_atr_period and self.adaptive_atr_period > 0:
+            atr_values = atr.values
+        else:
+            atr_values = np.zeros(len(df))
+
         # Optimize loop using Numpy arrays (vectorized extraction)
         highs = df['high'].values
         lows = df['low'].values
@@ -94,6 +103,8 @@ class GridTradingStrategy:
         # when crossing the line, not just because `low <= level` while sitting above it.
         prev_closes = np.roll(closes, 1)
         prev_closes[0] = start_price
+
+        last_recenter_idx = -self.recenter_cooldown - 1
 
         for i in range(len(closes)):
             h = highs[i]
@@ -129,6 +140,65 @@ class GridTradingStrategy:
                         inventory -= amount_to_sell
                         grid_status[level] = 0
                         trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
+
+            # Re-center logic AFTER grid trades to correctly capture intra-bar action
+            if (c > upper_bound or c < lower_bound) and (i - last_recenter_idx) >= self.recenter_cooldown:
+                last_recenter_idx = i
+                # Rebalance portfolio to 50/50
+                equity = cash + (inventory * c)
+                # target cash and inventory based on total equity
+                target_cash = equity / 2.0
+                target_inventory = target_cash / c
+
+                # Rebalance by buying/selling difference
+                if inventory > target_inventory:
+                    # Sell excess
+                    amount_to_sell = inventory - target_inventory
+                    exec_price = c * (1 - self.slippage_pct)
+                    trade_value = amount_to_sell * exec_price
+                    fee = trade_value * self.fee_pct
+                    cash += (trade_value - fee)
+                    inventory -= amount_to_sell
+                    trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell, 'note': 'rebalance'})
+                elif inventory < target_inventory:
+                    # Buy missing
+                    amount_to_buy = target_inventory - inventory
+                    exec_price = c * (1 + self.slippage_pct)
+                    trade_value = amount_to_buy * exec_price
+                    fee = trade_value * self.fee_pct
+                    if cash >= (trade_value + fee):
+                        cash -= (trade_value + fee)
+                        inventory += amount_to_buy
+                        trades.append({'time': dates[i], 'type': 'buy', 'price': exec_price, 'amount': amount_to_buy, 'note': 'rebalance'})
+
+                # Recalculate grid
+                if self.adaptive_atr_period and self.adaptive_atr_period > 0:
+                    current_atr = atr_values[i]
+                    range_abs = current_atr * self.atr_multiplier
+                    lower_bound = c - (range_abs / 2)
+                    upper_bound = c + (range_abs / 2)
+                    lower_bound = max(1e-9, lower_bound)
+                else:
+                    lower_bound = c * (1 - self.grid_range_pct/2)
+                    upper_bound = c * (1 + self.grid_range_pct/2)
+
+                if self.grid_type == "geometric":
+                    grid_levels = np.geomspace(lower_bound, upper_bound, self.num_grids)
+                else:
+                    grid_levels = np.linspace(lower_bound, upper_bound, self.num_grids)
+
+                buy_grids = len([g for g in grid_levels if g < c])
+                sell_grids = len([g for g in grid_levels if g >= c])
+
+                trade_amount_quote = cash / buy_grids if buy_grids > 0 else 0
+                trade_amount_base = inventory / sell_grids if sell_grids > 0 else 0
+
+                grid_status = {}
+                for level in grid_levels:
+                    if level >= c:
+                        grid_status[level] = trade_amount_base
+                    else:
+                        grid_status[level] = 0
 
             equity = cash + (inventory * c)
             equity_curve.append(equity)

@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--grid-type", type=str, default="arithmetic", choices=["arithmetic", "geometric"], help="Type of grid spacing")
     parser.add_argument("--adaptive-atr", type=int, default=None, help="If set, uses ATR over this period to dynamically calculate grid range")
     parser.add_argument("--atr-multiplier", type=float, default=2.0, help="Multiplier for ATR when using adaptive grid")
+    parser.add_argument("--cooldown", type=int, default=0, help="Cooldown period in bars before grid can recenter again")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -36,7 +37,8 @@ def main():
         grid_range_pct=args.range_pct,
         grid_type=args.grid_type,
         adaptive_atr_period=args.adaptive_atr,
-        atr_multiplier=args.atr_multiplier
+        atr_multiplier=args.atr_multiplier,
+        recenter_cooldown=args.cooldown
     )
     results = strategy.backtest(df)
 
