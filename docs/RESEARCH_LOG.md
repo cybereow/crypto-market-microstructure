@@ -144,7 +144,7 @@ python scripts/backtest_meta_ml_walkforward.py \
   --signal reversion --pt-mult 2.0 --sl-mult 2.0 --target-precision 0.60
 ```
 
-### 6. 🎯 The "90% win rate" goal — the real, measured result
+### 6. The "90% win rate" goal — the real, measured result
 
 This is the project's most important finding, and it answers your question directly.
 
@@ -165,10 +165,10 @@ trades, purged walk-forward, after a 0.4% fee):
 
 | Signal | pt/sl | Breakeven WR | Win rate (top 10%) | Profit Factor | Verdict |
 |---|---|---|---|---|---|
-| breakout | 0.25/3.0 | **92.3%** | **91.6%** | **0.56** | ❌ Great win rate, **loses money** |
-| breakout | 0.33/3.0 | 90.1% | **91.0%** | 0.82 | ❌ 91% wins, still unprofitable |
-| breakout | 0.5/3.0 | 85.7% | 89.0% | 1.10 | ⚠️ Marginal |
-| **reversion** | **2.0/2.0** | **50.0%** | **58.8%** | **1.28** | ✅ **Best profitability** |
+| breakout | 0.25/3.0 | **92.3%** | **91.6%** | **0.56** | **loses money** |
+| breakout | 0.33/3.0 | 90.1% | **91.0%** | 0.82 | still unprofitable |
+| breakout | 0.5/3.0 | 85.7% | 89.0% | 1.10 | Marginal |
+| **reversion** | **2.0/2.0** | **50.0%** | **58.8%** | **1.28** | **Best profitability** |
 
 **A 91% win rate at profit factor 0.56 means blowing up the account.** In
 contrast, a 58.8% win rate with a balanced payoff is actually profitable.
@@ -209,7 +209,7 @@ walk-forward trades through 2026-08-30, after costs):
 
 Apparent improvement: **48.8% → 62.4% win rate** and **PF 1.16 → 1.96**.
 
-### ⛔ Important correction — this improvement failed significance testing
+### Important correction — this improvement failed significance testing
 
 The table above was re-examined with significance testing
 (`src/significance.py`). The result contradicts the earlier claim:
@@ -246,7 +246,7 @@ survived:
 Case 3 is exactly the trap warned about from the start: **a high win rate
 and a PF below 1 can coexist.**
 
-⚠️ **Also, `corr(p_win, label)` dropped to 0.032 on the 1-hour timeframe**
+**Also, `corr(p_win, label)` dropped to 0.032 on the 1-hour timeframe**
 (from 0.082 on 4-hour). More data did not raise predictive power — meaning
 the 4-hour signal was also mostly noise, and the 0.082 estimate on the
 smaller sample was optimistic.
@@ -312,7 +312,7 @@ filter can save it** — this is arithmetic, not model quality.
    extractable at 4-hour resolution with retail cost. The daily timeframe
    might have a bigger per-trade edge.
 
-⛔ **What NOT to do:** add another feature, model, or knob. The problem isn't the model layer.
+**What NOT to do:** add another feature, model, or knob. The problem isn't the model layer.
 
 #### Experimental confirmation of the cost hypothesis
 
@@ -338,7 +338,7 @@ An important note on the breakeven point: at `pt/sl = 2:1`, breakeven is
 same point as section 6 — **win rate is meaningless without the barrier
 geometry.**
 
-⚠️ **Execution warning:** the 0.08% cost assumes **maker** orders get
+**Execution warning:** the 0.08% cost assumes **maker** orders get
 filled. A breakout with a limit order might not fill at all (adverse
 selection) — meaning you miss the winning trades and get filled on the
 losing ones. This number is an **optimistic ceiling**, and validating it for
@@ -352,7 +352,7 @@ Evidence that the ideas actually work (from these same runs):
 - Familiar leaf paths: **49.5%** / rare paths: **41.1%** — idea 4 confirmed;
   the model genuinely performs worse in unfamiliar conditions.
 
-⚠️ **Scientific-honesty warning:** `corr(p_win, label)` is about **0.08**.
+**Scientific-honesty warning:** `corr(p_win, label)` is about **0.08**.
 That is, the model's ranking power is real but **weak**. With few folds,
 part of the improvement above could be luck — which is why the "count"
 column is always printed next to win rate. 85 trades is too few for a
@@ -475,7 +475,7 @@ data across 10 assets produced only 826 candidates (vs. 4938 on 4-hour) —
 below the 200-walk-forward-trade floor section 6 set as the minimum for any
 definitive conclusion, and that's before any walk-forward split.
 
-⚠️ This experiment tested only one signal/geometry combination (the one with
+This experiment tested only one signal/geometry combination (the one with
 an edge on 4-hour), not a full sweep. A larger barrier geometry (e.g.,
 pt/sl=4:2) or a different signal might do better on daily — but that's a new,
 untested hypothesis, not something this measurement supports. What was
@@ -527,7 +527,7 @@ win is ~0.29% — smaller than the cost itself — meaning on a 5-minute
 candle, the typical retail cost is even larger than the size of the price
 move; a structural finding in its own right.)
 
-⚠️ **This direction check (main hypothesis long vs. short) was a principled
+**This direction check (main hypothesis long vs. short) was a principled
 test, not another knob to chase p<0.05 with** — the only way to find out
 whether the direction hypothesis was wrong or there was simply nothing to
 find. Both directions were rejected, so continuing to search by tuning
