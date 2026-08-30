@@ -119,10 +119,10 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_target(df: pd.DataFrame, threshold_pct: float = 0.005) -> pd.Series:
-    """3-class target: 2=strong up, 1=flat/noise, 0=strong down."""
+    """2-class target: 1=up, 0=down. Ambiguous bars excluded."""
     future_ret = df['ret_1d'].shift(-1)
-    target = pd.Series(1, index=df.index, name='target')  # default flat
-    target[future_ret > threshold_pct] = 2
+    target = pd.Series(np.nan, index=df.index, name='target')
+    target[future_ret > threshold_pct] = 1
     target[future_ret < -threshold_pct] = 0
     return target
 
@@ -182,13 +182,14 @@ def main():
         val = int(tf_match.group(1))
         unit = tf_match.group(2)
         if unit == 'h':
-            threshold = threshold * np.sqrt(val / 24)
+            threshold = threshold * np.sqrt(val / 24) * 2.5
         elif unit == 'm':
-            threshold = threshold * np.sqrt(val / (24 * 60))
+            threshold = threshold * np.sqrt(val / (24 * 60)) * 2.5
 
-    # 3-class target
     df_features['target'] = create_target(df_features, threshold_pct=threshold)
-    df_features.dropna(subset=['target'], inplace=True)
+    # Drop rows where target is NaN (the old "flat" zone)
+    df_features = df_features.dropna(subset=['target'])
+    df_features['target'] = df_features['target'].astype(int)
 
     # Drop rows where future return is NaN (last row)
     future_ret = df_features['ret_1d'].shift(-1)
@@ -198,6 +199,7 @@ def main():
     features = [col for col in df_features.columns if col not in exclude_cols]
 
     X = df_features[features]
+    X = X.replace([np.inf, -np.inf], np.nan)
     y = df_features['target']
 
     train_size = int(len(X) * 0.8)
@@ -208,43 +210,36 @@ def main():
     class_counts = y_train_full.value_counts().sort_index()
     print(f"\nTarget distribution (in-sample):")
     print(f"  Down (0): {class_counts.get(0, 0)} ({class_counts.get(0, 0)/len(y_train_full):.1%})")
-    print(f"  Flat (1): {class_counts.get(1, 0)} ({class_counts.get(1, 0)/len(y_train_full):.1%})")
-    print(f"  Up   (2): {class_counts.get(2, 0)} ({class_counts.get(2, 0)/len(y_train_full):.1%})")
+    print(f"  Up   (1): {class_counts.get(1, 0)} ({class_counts.get(1, 0)/len(y_train_full):.1%})")
 
     # Feature selection on isolated early slice
     sel_train_size = int(len(X_train_full) * 0.5)
     X_sel_train = X_train_full.iloc[:sel_train_size]
     y_sel_train = y_train_full.iloc[:sel_train_size]
 
+    # Class weights to handle imbalanced classes
+    n_pos = (y_train_full == 1).sum()
+    n_neg = (y_train_full == 0).sum()
+    scale_pos_weight = n_neg / max(n_pos, 1)
+
     print("\nRunning feature selection on isolated slice.")
     sel_model = XGBClassifier(
-        random_state=42, eval_metric='mlogloss',
-        num_class=3, objective='multi:softprob'
+        random_state=42, eval_metric='logloss',
+        objective='binary:logistic',
+        scale_pos_weight=scale_pos_weight
     )
     sel_model.fit(X_sel_train, y_sel_train)
     importance = sel_model.feature_importances_
     feat_imp = pd.DataFrame({'Feature': features, 'Importance': importance})
     feat_imp = feat_imp.sort_values(by='Importance', ascending=False)
 
-    top_features = feat_imp.head(10)['Feature'].tolist()
-    print(f"Selected top 10 features: {top_features}")
+    top_features = feat_imp.head(15)['Feature'].tolist()
+    print(f"Selected top 15 features: {top_features}")
     X_train_full = X_train_full[top_features]
 
     # Purged walk-forward CV
     splits = purged_walk_forward_split(len(X_train_full), n_splits=5, purge_gap=5)
     print(f"\nPurged walk-forward: {len(splits)} splits, {len(X_train_full)} samples.")
-
-    # Class weights to handle imbalanced classes
-    total = len(y_train_full)
-    n_classes = 3
-    class_weight_map = {}
-    for c in range(n_classes):
-        count = (y_train_full == c).sum()
-        if count > 0:
-            class_weight_map[c] = total / (n_classes * count)
-        else:
-            class_weight_map[c] = 1.0
-    sample_weights = y_train_full.map(class_weight_map).values
 
     param_distributions = {
         'max_depth': [2, 3, 4],
@@ -259,21 +254,22 @@ def main():
     }
 
     base_model = XGBClassifier(
-        random_state=42, eval_metric='mlogloss',
-        num_class=3, objective='multi:softprob'
+        random_state=42, eval_metric='logloss',
+        objective='binary:logistic',
+        scale_pos_weight=scale_pos_weight
     )
 
     search = RandomizedSearchCV(
         base_model,
         param_distributions=param_distributions,
         n_iter=15,
-        scoring='f1_macro',
+        scoring='f1',
         cv=splits,
         random_state=42,
         n_jobs=-1
     )
 
-    search.fit(X_train_full, y_train_full, sample_weight=sample_weights)
+    search.fit(X_train_full, y_train_full)
 
     print(f"\nBest params: {search.best_params_}")
     print(f"Best CV F1-macro: {search.best_score_:.4f}")
@@ -285,7 +281,7 @@ def main():
         last_train, last_test = splits[-1]
         y_pred = model.predict(X_train_full.iloc[last_test])
         print(f"\nLast fold classification report:")
-        print(classification_report(y_train_full.iloc[last_test], y_pred, target_names=['Down', 'Flat', 'Up']))
+        print(classification_report(y_train_full.iloc[last_test], y_pred, target_names=['Down', 'Up']))
 
     features_path = os.path.join(OUTPUT_DIR, "ml_features.txt")
     with open(features_path, 'w') as f:

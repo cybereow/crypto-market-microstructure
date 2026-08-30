@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description="Backtest ML Trading Strategy.")
     parser.add_argument("--data", type=str, required=True)
     parser.add_argument("--model", type=str, default="ml_model.json")
-    parser.add_argument("--confidence", type=float, default=0.40, help="Confidence threshold for taking positions")
+    parser.add_argument("--confidence", type=float, default=0.55, help="Confidence threshold for taking positions")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)

@@ -12,7 +12,7 @@ class MLTradingStrategy:
         self.stop_loss_pct = stop_loss_pct
         self.max_daily_dd = max_daily_dd
 
-    def generate_signals(self, X: pd.DataFrame, confidence_threshold=0.40, close_series=None) -> pd.DataFrame:
+    def generate_signals(self, X: pd.DataFrame, confidence_threshold=0.55, close_series=None) -> pd.DataFrame:
         """
         Returns DataFrame with 'position' (direction) and 'size' (Kelly fraction).
         3-class model: 0=down, 1=flat, 2=up.
@@ -55,10 +55,16 @@ class MLTradingStrategy:
                         position.iloc[i] = 1
                         edge = prob_up[i] - (1 - prob_up[i])
                         size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
+                        if size.iloc[i] < 0.10:
+                            position.iloc[i] = 0
+                            size.iloc[i] = 0.0
                     elif prob_up[i] <= (1 - confidence_threshold):
                         position.iloc[i] = -1
                         edge = (1 - prob_up[i]) - prob_up[i]
                         size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
+                        if size.iloc[i] < 0.10:
+                            position.iloc[i] = 0
+                            size.iloc[i] = 0.0
 
                         # Trend Filter for Shorts
                         if close_series is not None and close_series.iloc[i] >= sma_50.iloc[i]:

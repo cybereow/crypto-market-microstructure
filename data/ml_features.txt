@@ -1,1 +1,1 @@
-RSI_70,MACD_12_26_9,ATR_ratio,OBV_sma_70,roc_20,ret_3d,ATR_50,RSI_14,vol_change_1d,OBV_sma_20
+sma_dist,roc_10,hour,dow,vol_change_1d,vol_sma_20,MACD_12_26_9,ret_3d,OBV_sma_70,ret_5d,vol_ratio,realized_vol_30,OBV_trend,vol_regime,bb_width

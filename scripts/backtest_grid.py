@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--adaptive-atr", type=int, default=14, help="If set, uses ATR over this period to dynamically calculate grid range")
     parser.add_argument("--atr-multiplier", type=float, default=2.0, help="Multiplier for ATR when using adaptive grid")
     parser.add_argument("--cooldown", type=int, default=20, help="Cooldown period in bars before grid can recenter again")
-    parser.add_argument("--adx-threshold", type=float, default=25.0, help="ADX threshold to stop grid trading in trends")
+    parser.add_argument("--adx-threshold", type=float, default=35.0, help="ADX threshold to stop grid trading in trends")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
