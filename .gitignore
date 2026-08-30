@@ -7,3 +7,6 @@ research/*/output/
 data/*.csv
 data/*.pkl
 data/*.json
+# merge_klines.py writes a .bak alongside each file it modifies
+data/*.bak
+data/*.csv.bak
