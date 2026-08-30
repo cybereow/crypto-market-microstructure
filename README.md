@@ -11,6 +11,12 @@ rather than an investment product, that discipline is the point.
 Open to contract/freelance data-engineering and quant-research work — reach
 out via GitHub.
 
+**Process note:** built through AI pair-programming with Claude Code — from
+the initial architecture through the tick-level data engineering and
+statistical testing documented in this log. Said plainly, in the same spirit
+of not hiding an inconvenient result that runs through the rest of this
+project.
+
 ## What's actually interesting here
 
 - **Statistical rigor over a good-looking number.** Bootstrap and permutation
