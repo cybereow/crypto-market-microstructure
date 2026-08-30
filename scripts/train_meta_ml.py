@@ -16,12 +16,13 @@ multiplies the sample count and pushes the model toward patterns that
 generalize across coins rather than one coin's idiosyncratic noise.
 """
 import argparse
+import json
 import os
 import sys
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import RandomizedSearchCV, cross_val_predict
 from sklearn.metrics import classification_report
 from xgboost import XGBClassifier
 
@@ -29,8 +30,28 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.labeling import donchian_breakout_entries, rsi_reversion_entries, triple_barrier_labels
+from src.regime import build_btc_regime, add_alignment_features, REGIME_FEATURE_COLS
+from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
+                             precision_threshold_table)
+from src.novelty import LeafNoveltyDetector, save_novelty
 
 EXCLUDE_COLS = {'open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d'}
+
+
+def load_btc_regime(btc_file: str):
+    """Build the market-regime frame once from a BTC OHLCV CSV, to be shared
+    by every asset. Returns None when the file is missing so the caller can
+    proceed without regime features rather than crashing.
+    """
+    if not btc_file:
+        return None
+    btc_path = os.path.join(OUTPUT_DIR, btc_file)
+    if not os.path.exists(btc_path):
+        print(f"Warning: BTC regime file {btc_path} not found — "
+              f"proceeding WITHOUT cross-asset regime features.")
+        return None
+    btc_df = pd.read_csv(btc_path, index_col='timestamp', parse_dates=True)
+    return build_btc_regime(btc_df)
 
 SIGNAL_BUILDERS = {
     'breakout': lambda df, lookback: donchian_breakout_entries(df, lookback=lookback),
@@ -39,13 +60,20 @@ SIGNAL_BUILDERS = {
 
 
 def build_asset_labels(data_path: str, lookback: int, pt_mult: float, sl_mult: float,
-                        max_holding: int, funding_path: str = None, signal: str = 'breakout'):
+                        max_holding: int, funding_path: str = None, signal: str = 'breakout',
+                        btc_regime: pd.DataFrame = None):
     """Returns (labeled_df, feature_cols) for one asset: every candidate
     trade (a bar where the primary rule-based signal fired), across the
     ENTIRE series, joined with its feature snapshot at entry time and its
     triple-barrier outcome (label/ret/hold/entry_pos/exit_pos). No
     train/test split — callers slice by whatever boundary they need (a
     single chronological split, or repeated walk-forward boundaries).
+
+    When `btc_regime` is supplied (see src/regime.py), each candidate trade
+    additionally gets cross-asset market-context features — most importantly
+    `btc_alignment`, whether the trade runs with or against BTC's trend.
+    These are computed as an explicit interaction with the trade's own side
+    rather than left for the trees to discover from a raw BTC column.
     """
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
 
@@ -66,6 +94,11 @@ def build_asset_labels(data_path: str, lookback: int, pt_mult: float, sl_mult: f
 
     feature_cols = [c for c in df_features.columns if c not in EXCLUDE_COLS]
     joined = labels.join(df_features[feature_cols], how='left')
+
+    if btc_regime is not None:
+        joined = add_alignment_features(joined, btc_regime)
+        feature_cols = feature_cols + REGIME_FEATURE_COLS
+
     joined[feature_cols] = joined[feature_cols].replace([np.inf, -np.inf], np.nan)
     joined = joined.dropna(subset=feature_cols)
     return joined, feature_cols
@@ -73,7 +106,7 @@ def build_asset_labels(data_path: str, lookback: int, pt_mult: float, sl_mult: f
 
 def build_asset_dataset(data_path: str, lookback: int, pt_mult: float, sl_mult: float,
                          max_holding: int, split_pct: float, funding_path: str = None,
-                         signal: str = 'breakout'):
+                         signal: str = 'breakout', btc_regime: pd.DataFrame = None):
     """Returns (train_df, test_df, feature_cols): build_asset_labels sliced
     at one chronological split point (as a fraction of the asset's bar
     count, not of its trade count, so it lines up with how every other
@@ -81,7 +114,8 @@ def build_asset_dataset(data_path: str, lookback: int, pt_mult: float, sl_mult: 
     """
     df_full = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
     joined, feature_cols = build_asset_labels(data_path, lookback, pt_mult, sl_mult, max_holding,
-                                               funding_path=funding_path, signal=signal)
+                                               funding_path=funding_path, signal=signal,
+                                               btc_regime=btc_regime)
     if joined is None:
         return None, None, []
 
@@ -105,7 +139,24 @@ def main():
     parser.add_argument("--model-out", type=str, default="meta_ml_model.json")
     parser.add_argument("--use-funding", action="store_true",
                          help="Merge <exchange>_funding_<SYMBOL>.csv (from download_funding_vision.py) per asset if present")
+    parser.add_argument("--btc-regime-file", type=str, default=None,
+                         help="BTC OHLCV CSV used to build cross-asset market-regime features "
+                              "(btc_alignment etc). Strongly recommended — see src/regime.py.")
+    parser.add_argument("--target-precision", type=float, default=0.65,
+                         help="Win rate the calibrated confidence threshold aims for. "
+                              "Replaces optimizing F1, which rewards taking trades.")
+    parser.add_argument("--min-trades", type=int, default=30,
+                         help="Minimum trades a calibrated threshold must still admit, so a "
+                              "high win rate cannot be 'achieved' on a meaningless sample.")
+    parser.add_argument("--scoring-quantile", type=float, default=0.8,
+                         help="Model selection measures precision on scores above this "
+                              "quantile — the region a selective strategy actually trades.")
     args = parser.parse_args()
+
+    btc_regime = load_btc_regime(args.btc_regime_file)
+    if btc_regime is not None:
+        print(f"Loaded BTC market-regime context from {args.btc_regime_file} "
+              f"({len(btc_regime)} bars).")
 
     all_train = []
     per_asset_test = {}
@@ -127,6 +178,7 @@ def main():
         train_df, test_df, feats = build_asset_dataset(
             data_path, args.lookback, args.pt_mult, args.sl_mult, args.max_holding,
             args.split_pct, funding_path=funding_path, signal=args.signal,
+            btc_regime=btc_regime,
         )
         if train_df is None or train_df.empty:
             print(f"Warning: no candidate trades for {data_file}, skipping.")
@@ -172,18 +224,59 @@ def main():
         'reg_alpha': [0.1, 1.0, 5.0],
         'reg_lambda': [3.0, 5.0, 10.0],
     }
+    # Model selection targets PRECISION ON THE CONFIDENT SLICE, not F1.
+    # F1's recall term rewards a model for firing often; a selective
+    # strategy only ever trades its top-confidence candidates, so that is
+    # the only region where being right has any value. See src/calibration.py
+    # for why this is preferred over a custom asymmetric objective (which
+    # would also decalibrate the probabilities the Kelly sizing depends on).
+    #
+    # NOTE: scale_pos_weight is deliberately NOT set here. Up-weighting the
+    # positive class pushes the model toward predicting wins — precisely the
+    # wrong bias when the goal is precision. It is kept out so probabilities
+    # stay calibrated for Kelly sizing.
     base_model = XGBClassifier(random_state=42, eval_metric='logloss',
-                                objective='binary:logistic', scale_pos_weight=scale_pos_weight)
+                                objective='binary:logistic')
+    scorer = precision_at_threshold_scorer(quantile=args.scoring_quantile, min_support=10)
     search = RandomizedSearchCV(base_model, param_distributions=param_distributions,
-                                 n_iter=15, scoring='f1', cv=5, random_state=42, n_jobs=-1)
+                                 n_iter=15, scoring=scorer, cv=5, random_state=42, n_jobs=-1)
     search.fit(X_train, y_train)
     print(f"\nBest params: {search.best_params_}")
-    print(f"Best CV F1: {search.best_score_:.4f}")
+    print(f"Best CV top-{(1 - args.scoring_quantile) * 100:.0f}% precision: {search.best_score_:.4f}")
 
     model = search.best_estimator_
     importances = pd.Series(model.feature_importances_, index=feature_cols).sort_values(ascending=False)
     print("\nTop 10 features:")
     print(importances.head(10).to_string())
+
+    # --- Confidence threshold calibration -------------------------------
+    # Calibrated on the cross-validated out-of-fold predictions, NOT on
+    # in-sample fits: a threshold tuned on data the model memorized would
+    # read far too optimistically and collapse in live use.
+    print("\n" + "=" * 60)
+    print("  Confidence threshold calibration (target-precision search)")
+    print("=" * 60)
+    oof_probs = cross_val_predict(model, X_train, y_train, cv=5,
+                                  method='predict_proba', n_jobs=-1)[:, 1]
+    calib = calibrate_threshold_for_precision(
+        y_train, oof_probs, target_precision=args.target_precision,
+        min_trades=args.min_trades,
+    )
+    print(f"  Target precision:      {args.target_precision:.1%}")
+    print(f"  Chosen threshold:      {calib['threshold']:.4f}")
+    print(f"  Precision achieved:    {calib['precision']:.1%} (out-of-fold)")
+    print(f"  Trades admitted:       {calib['n_trades']} of {len(y_train)} candidates")
+    print(f"  Target met:            {calib['target_met']}  ({calib['reason']})")
+    print("\n  Precision/volume tradeoff across thresholds (out-of-fold):")
+    print(precision_threshold_table(y_train, oof_probs).to_string(index=False))
+
+    # --- Leaf-novelty (OOD) detector -------------------------------------
+    # Reuses this very model's leaf assignments as the novelty fingerprint,
+    # so there is no second model to train or keep in sync. Persisted as a
+    # small JSON of leaf occupancy counts.
+    detector = LeafNoveltyDetector().fit(model, X_train)
+    print(f"\nLeaf-novelty detector fitted on {len(X_train)} training trades "
+          f"(rare-path cutoff at the {detector.rare_percentile:.0f}th percentile).")
 
     print("\n" + "=" * 60)
     print("  Per-asset out-of-sample evaluation")
@@ -194,8 +287,11 @@ def main():
             continue
         X_test = test_df[feature_cols]
         y_test = test_df['label']
-        y_pred = model.predict(X_test)
         base_rate = y_test.mean()
+        # Report at the CALIBRATED threshold, not the default 0.5 that
+        # .predict() implies — 0.5 is not the threshold this strategy trades.
+        p_test = model.predict_proba(X_test)[:, 1]
+        y_pred = (p_test >= calib['threshold']).astype(int)
         print(f"\n{data_file} ({len(test_df)} OOS candidate trades, base win rate {base_rate:.1%}):")
         print(classification_report(y_test, y_pred, target_names=['Loss', 'Win'], zero_division=0))
 
@@ -211,7 +307,24 @@ def main():
     with open(os.path.join(OUTPUT_DIR, "meta_ml_signal.txt"), 'w') as f:
         f.write(args.signal)
 
+    # The calibrated threshold and the novelty detector's leaf counts are
+    # part of the trained artifact: a model shipped without them would be
+    # evaluated at 0.5 with no OOD guard, which is not the strategy that was
+    # validated.
+    save_novelty(detector, os.path.join(OUTPUT_DIR, "meta_ml_novelty.json"))
+    with open(os.path.join(OUTPUT_DIR, "meta_ml_threshold.json"), 'w') as f:
+        json.dump({
+            'threshold': calib['threshold'],
+            'target_precision': args.target_precision,
+            'oof_precision': calib['precision'],
+            'oof_n_trades': calib['n_trades'],
+            'target_met': calib['target_met'],
+            'used_btc_regime': btc_regime is not None,
+        }, f, indent=2)
+
     print(f"\nModel saved to {model_path}")
+    print(f"Calibrated threshold saved to {os.path.join(OUTPUT_DIR, 'meta_ml_threshold.json')}")
+    print(f"Novelty leaf counts saved to {os.path.join(OUTPUT_DIR, 'meta_ml_novelty.json')}")
 
 
 if __name__ == "__main__":
