@@ -187,6 +187,40 @@ def scan_triple_barrier(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
     return {'label': label, 'exit_price': exit_price, 'hold': hold}
 
 
+def obi_momentum_entries(df: pd.DataFrame, lookback: int = 288, obi_col: str = 'obi',
+                          quantile: float = 0.90) -> pd.Series:
+    """Primary signal from top-of-book order-flow imbalance, not price
+    action: +1 the bar `obi` crosses UP through its own rolling upper
+    quantile (resting bid size has come to dominate resting ask size), -1
+    the bar it crosses DOWN through the rolling lower quantile (symmetric
+    selling pressure).
+
+    Rationale, and why this is a genuinely different bet from every other
+    signal in this repo: order-flow-imbalance literature (e.g. Cont,
+    Kukanov & Stoikov 2014, "The Price Impact of Order Book Events") links
+    a skewed resting bid/ask ratio to near-term price PRESSURE — the book
+    itself, not its history. Every other signal here (Donchian breakout,
+    RSI reversion, volatility squeeze) is a function of OHLC alone, which
+    is exactly the kind of pattern a market maker or arb bot can already
+    see and trade against before this repo's own bar even closes. OBI is
+    derived from the live order book, not the printed price series.
+
+    `lookback` sets the window OBI's own extremes are measured against
+    (default 288 = 1 day of 5-minute bars), so "extreme" adapts to each
+    period's baseline resting-size skew rather than a fixed 0..1 cutoff
+    that would drift with whatever ratio happens to be typical.
+    """
+    obi = df[obi_col]
+    upper = obi.rolling(lookback).quantile(quantile).shift(1)
+    lower = obi.rolling(lookback).quantile(1 - quantile).shift(1)
+    prev = obi.shift(1)
+
+    entries = pd.Series(0, index=df.index)
+    entries[(prev <= upper) & (obi > upper)] = 1
+    entries[(prev >= lower) & (obi < lower)] = -1
+    return entries
+
+
 def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
                            pt_mult: float = 1.5, sl_mult: float = 1.0,
                            max_holding: int = 18) -> pd.DataFrame:

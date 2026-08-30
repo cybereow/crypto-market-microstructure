@@ -1,6 +1,7 @@
 import pandas as pd
 
-from src.labeling import donchian_breakout_entries, rsi_reversion_entries, triple_barrier_labels
+from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
+                          obi_momentum_entries, triple_barrier_labels)
 
 
 def test_triple_barrier_profit_take_hit():
@@ -84,3 +85,35 @@ def test_rsi_reversion_entries_direction():
     entries = rsi_reversion_entries(df)
     assert entries.iloc[1] == 1   # crossed back up through 30 -> long
     assert entries.iloc[3] == -1  # crossed back down through 70 -> short
+
+
+def test_obi_momentum_entries_direction():
+    """OBI sits flat at its baseline, then spikes to a new extreme high
+    (heavy bid imbalance) and later a new extreme low (heavy ask
+    imbalance). The crossing bars should fire long/short respectively.
+    """
+    dates = pd.date_range("2023-01-01", periods=12, freq="5min")
+    df = pd.DataFrame({
+        'obi': [0.50, 0.50, 0.50, 0.50, 0.50,   # flat baseline
+                0.90,                            # spike up -> cross upper quantile -> long
+                0.50, 0.50, 0.50, 0.50, 0.50,    # back to flat baseline
+                0.10],                           # spike down -> cross lower quantile -> short
+    }, index=dates)
+    entries = obi_momentum_entries(df, lookback=5, quantile=0.8)
+    assert entries.iloc[5] == 1
+    assert entries.iloc[11] == -1
+    # No entries anywhere else.
+    assert (entries.drop(entries.index[[5, 11]]) == 0).all()
+
+
+def test_obi_momentum_entries_no_repeat_while_extreme_persists():
+    """Firing is on the CROSSING bar only, not every bar OBI stays extreme
+    -- otherwise a persistent imbalance would generate overlapping
+    candidate trades for every bar of its duration.
+    """
+    dates = pd.date_range("2023-01-01", periods=8, freq="5min")
+    df = pd.DataFrame({'obi': [0.50, 0.50, 0.50, 0.50, 0.50, 0.90, 0.91, 0.92]}, index=dates)
+    entries = obi_momentum_entries(df, lookback=5, quantile=0.8)
+    assert entries.iloc[5] == 1
+    assert entries.iloc[6] == 0
+    assert entries.iloc[7] == 0

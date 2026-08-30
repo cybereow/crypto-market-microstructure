@@ -32,7 +32,14 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 
-BASE_URL = "https://data.binance.vision/data/spot/monthly/klines"
+BASE_URLS = {
+    'spot': "https://data.binance.vision/data/spot/monthly/klines",
+    # USD-M perpetual futures. Needed to match instruments with the L2 OBI
+    # downloader (download_l2_obi.py), which only has a futures bookTicker
+    # archive to draw from -- pairing it with spot klines would compare a
+    # futures order-flow signal against a different instrument's price.
+    'futures': "https://data.binance.vision/data/futures/um/monthly/klines",
+}
 
 # The archive's CSVs are headerless; these are the 12 documented columns.
 KLINE_COLS = [
@@ -48,12 +55,13 @@ def month_range(start: datetime, end: datetime):
         cur = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 
-def download_month(symbol: str, timeframe: str, month: datetime) -> pd.DataFrame:
+def download_month(symbol: str, timeframe: str, month: datetime, market: str = 'spot') -> pd.DataFrame:
     """Fetch one monthly archive. Returns an empty frame for months before
     the symbol listed (the CDN 404s), which the caller treats as 'skip'.
     """
     month_str = month.strftime("%Y-%m")
-    url = f"{BASE_URL}/{symbol}/{timeframe}/{symbol}-{timeframe}-{month_str}.zip"
+    base_url = BASE_URLS[market]
+    url = f"{base_url}/{symbol}/{timeframe}/{symbol}-{timeframe}-{month_str}.zip"
     try:
         resp = requests.get(url, timeout=60)
     except requests.RequestException as exc:
@@ -66,6 +74,14 @@ def download_month(symbol: str, timeframe: str, month: datetime) -> pd.DataFrame
         with z.open(z.namelist()[0]) as f:
             df = pd.read_csv(f, header=None, names=KLINE_COLS)
 
+    # Some months ship WITH a header row (inconsistent across the archive),
+    # which read_csv turns into a non-numeric first data row. Drop those
+    # BEFORE any numeric comparison on open_time -- a string first row
+    # (e.g. futures archives, which hit this every month) breaks a
+    # magnitude check done first.
+    df['open_time'] = pd.to_numeric(df['open_time'], errors='coerce')
+    df = df[df['open_time'].notna()]
+
     # Binance switched open_time from milliseconds to microseconds in the
     # 2025 archives. Detect by magnitude rather than by date so this keeps
     # working for whatever they do next: ms timestamps for any plausible
@@ -73,16 +89,13 @@ def download_month(symbol: str, timeframe: str, month: datetime) -> pd.DataFrame
     if not df.empty and df['open_time'].iloc[0] > 1e14:
         df['open_time'] = df['open_time'] // 1000
 
-    # Some months ship WITH a header row (inconsistent across the archive),
-    # which read_csv turns into a non-numeric first data row. Drop those.
-    df = df[pd.to_numeric(df['open_time'], errors='coerce').notna()]
     return df
 
 
-def fetch_klines(symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+def fetch_klines(symbol: str, timeframe: str, start: datetime, end: datetime, market: str = 'spot') -> pd.DataFrame:
     frames = []
     for month in month_range(start, end):
-        df = download_month(symbol, timeframe, month)
+        df = download_month(symbol, timeframe, month, market=market)
         if df.empty:
             continue
         frames.append(df)
@@ -107,6 +120,10 @@ def main():
     parser.add_argument("--symbol", type=str, required=True,
                         help="Archive symbol without a slash, e.g. BTCUSDT")
     parser.add_argument("--timeframe", type=str, default="4h", help="e.g. 4h, 1h, 1d")
+    parser.add_argument("--market", type=str, default="spot", choices=list(BASE_URLS.keys()),
+                        help="'futures' pulls USD-M perpetual klines instead of spot -- use "
+                             "this to pair prices with download_l2_obi.py, which only has a "
+                             "futures order-book archive.")
     parser.add_argument("--start-date", type=str, default="2020-01-01", help="YYYY-MM-DD")
     parser.add_argument("--end-date", type=str, default=None,
                         help="YYYY-MM-DD (default: today)")
@@ -118,8 +135,8 @@ def main():
     start = datetime.strptime(args.start_date, "%Y-%m-%d")
     end = datetime.strptime(args.end_date, "%Y-%m-%d") if args.end_date else datetime.utcnow()
 
-    print(f"Downloading {args.symbol} {args.timeframe} from {start.date()} to {end.date()}")
-    df = fetch_klines(args.symbol, args.timeframe, start, end)
+    print(f"Downloading {args.market} {args.symbol} {args.timeframe} from {start.date()} to {end.date()}")
+    df = fetch_klines(args.symbol, args.timeframe, start, end, market=args.market)
 
     if df.empty:
         print("Error: no data downloaded (check the symbol spelling and date range).")
@@ -129,9 +146,10 @@ def main():
     if args.out:
         filename = args.out
     else:
-        # BTCUSDT -> binance_BTC_USDT_4h.csv
+        # BTCUSDT -> binance_BTC_USDT_4h.csv (or binance_futures_BTC_USDT_4h.csv)
         base = args.symbol[:-4] if args.symbol.endswith("USDT") else args.symbol
-        filename = f"binance_{base}_USDT_{args.timeframe}.csv"
+        prefix = "binance_futures" if args.market == "futures" else "binance"
+        filename = f"{prefix}_{base}_USDT_{args.timeframe}.csv"
 
     filepath = os.path.join(OUTPUT_DIR, filename)
     df.to_csv(filepath)

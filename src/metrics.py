@@ -53,3 +53,21 @@ def trade_level_stats(position: pd.Series, strat_ret: pd.Series) -> dict:
         "avg_loss": float(losses.mean()) if len(losses) > 0 else 0.0,
         "profit_factor": profit_factor,
     }
+
+
+def net_pf_expectancy(rets: np.ndarray, cost: float) -> tuple:
+    """Profit factor and mean net return for an array of already-discrete
+    trade returns (e.g. the `ret` column of `triple_barrier_labels`), after
+    subtracting a flat round-trip `cost` from each trade. Shared by every
+    script that compares a signal's economics under different cost/fill
+    assumptions (taker vs maker, different timeframes, etc.), so they can't
+    silently disagree on how profit factor is computed.
+    """
+    if len(rets) == 0:
+        return float('nan'), float('nan')
+    net = rets - cost
+    wins, losses = net[net > 0], net[net <= 0]
+    pf = (wins.sum() / abs(losses.sum())
+          if len(losses) and losses.sum() != 0
+          else (float('inf') if len(wins) else 0.0))
+    return float(pf), float(net.mean())

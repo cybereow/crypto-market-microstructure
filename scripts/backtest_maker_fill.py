@@ -40,23 +40,16 @@ from scripts.train_meta_ml import SIGNAL_BUILDERS
 from src.labeling import triple_barrier_labels
 from src.execution import simulate_maker_fills, triple_barrier_from_fill
 from src.significance import bootstrap_mean_pvalue
-
-
-def economics(rets: np.ndarray, cost: float) -> tuple:
-    """Profit factor and mean net return per trade, after `cost` per trade."""
-    if len(rets) == 0:
-        return float('nan'), float('nan')
-    net = rets - cost
-    wins, losses = net[net > 0], net[net <= 0]
-    pf = (wins.sum() / abs(losses.sum())
-          if len(losses) and losses.sum() != 0
-          else (float('inf') if len(wins) else 0.0))
-    return float(pf), float(net.mean())
+from src.metrics import net_pf_expectancy as economics
 
 
 def run_asset(path: str, signal: str, lookback: int, pt_mult: float, sl_mult: float,
-              max_holding: int, offset_mult: float, queue_timeout: int):
+              max_holding: int, offset_mult: float, queue_timeout: int, obi_path: str = None):
     df = pd.read_csv(path, index_col='timestamp', parse_dates=True)
+    if obi_path:
+        obi_df = pd.read_csv(obi_path, index_col='timestamp', parse_dates=True)
+        df = df.join(obi_df[['obi']], how='left')
+        df['obi'] = df['obi'].ffill()
     df_features = create_features(df)
     raw_atr = df_features['ATR_14'] * df_features['close']
     entries = SIGNAL_BUILDERS[signal](df_features, lookback)
@@ -75,6 +68,9 @@ def main():
         description="Simulate maker (limit-order) fills for the primary signal and check "
                     "whether the maker-cost edge survives, or is eaten by adverse selection.")
     parser.add_argument("--data", type=str, nargs='+', required=True)
+    parser.add_argument("--obi-data", type=str, default=None,
+                         help="CSV from download_l2_obi.py, joined in as an 'obi' column "
+                              "before feature-building. Required for --signal obi_momentum.")
     parser.add_argument("--signal", type=str, default="vol_breakout",
                          choices=list(SIGNAL_BUILDERS.keys()))
     parser.add_argument("--lookback", type=int, default=20)
@@ -107,9 +103,10 @@ def main():
         if not os.path.exists(path):
             print(f"  {data_file}: not found, skipping.")
             continue
+        obi_path = os.path.join(OUTPUT_DIR, args.obi_data) if args.obi_data else None
         market, fills, maker = run_asset(path, args.signal, args.lookback, args.pt_mult,
                                           args.sl_mult, args.max_holding, args.offset_mult,
-                                          args.queue_timeout)
+                                          args.queue_timeout, obi_path=obi_path)
         if market.empty:
             print(f"  {data_file}: no candidate trades, skipping.")
             continue

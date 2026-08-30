@@ -31,7 +31,7 @@ from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           volatility_breakout_entries, trend_pullback_entries,
-                          range_fade_entries, triple_barrier_labels)
+                          range_fade_entries, obi_momentum_entries, triple_barrier_labels)
 from src.regime import build_btc_regime, add_alignment_features, REGIME_FEATURE_COLS
 from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
                              precision_threshold_table)
@@ -64,6 +64,9 @@ SIGNAL_BUILDERS = {
     'vol_breakout': lambda df, lookback: volatility_breakout_entries(df, lookback=lookback),
     'trend_pullback': lambda df, lookback: trend_pullback_entries(df, lookback=lookback),
     'range_fade': lambda df, lookback: range_fade_entries(df, lookback=lookback),
+    # Order-flow, not price action -- requires an 'obi' column (see
+    # scripts/download_l2_obi.py and --obi-data on backtest_maker_fill.py).
+    'obi_momentum': lambda df, lookback: obi_momentum_entries(df, lookback=lookback),
 }
 
 
