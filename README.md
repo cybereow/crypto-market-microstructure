@@ -43,7 +43,7 @@ out via GitHub.
 
 The full experimental detail — real numbers, tables, exact commands to
 reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEARCH_LOG.md)**
-(Persian; §-numbers below refer to it). This is the condensed version.
+(§-numbers below refer to it). This is the condensed version.
 
 | # | Finding | Verdict |
 |---|---|---|
@@ -90,7 +90,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log (Persian), §1-13
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-13
 ```
 
 ## Setup
