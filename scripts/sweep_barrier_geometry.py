@@ -53,6 +53,7 @@ from src.config import OUTPUT_DIR
 from scripts.train_meta_ml import build_asset_labels, load_btc_regime
 from src.calibration import precision_at_threshold_scorer
 from src.gating import select_non_overlapping
+from src.significance import bootstrap_mean_pvalue
 
 PARAM_DIST = {
     'max_depth': [2, 3, 4],
@@ -95,7 +96,12 @@ def evaluate_geometry(data_files, signal, lookback, pt_mult, sl_mult, max_holdin
     n = len(pooled_df)
     edges = [pooled_df.index[int(n * i / n_folds)] for i in range(n_folds)]
     edges.append(pooled_df.index[-1] + pd.Timedelta(seconds=1))
-    purge = pd.Timedelta(hours=4 * max_holding)
+    # Bar width inferred, not assumed: a hardcoded 4h would under-purge 1d
+    # data and leak overlapping labels across the fold boundary.
+    deltas = pd.Series(pooled_df.index.unique()).diff().dropna()
+    bar_hours = (deltas.mode().iloc[0].total_seconds() / 3600.0
+                 if not deltas.empty else 4.0)
+    purge = pd.Timedelta(hours=bar_hours * max_holding)
     scorer = precision_at_threshold_scorer(quantile=0.8, min_support=10)
 
     oos = []
@@ -146,13 +152,21 @@ def evaluate_geometry(data_files, signal, lookback, pt_mult, sl_mult, max_holdin
     pf_base, exp_base = econ(base_all)
     pf_top, exp_top = econ(top)
 
+    # Significance of the BASE signal: is its expectancy distinguishable from
+    # zero? This is the question that matters most here — a primary signal
+    # with no edge of its own cannot be rescued by any downstream model.
+    base_p = float('nan')
+    if len(base_all):
+        net = base_all['ret'].to_numpy() - cost_per_trade
+        base_p = bootstrap_mean_pvalue(net, n_iter=2000)
+
     return {
         'signal': signal, 'pt': pt_mult, 'sl': sl_mult, 'payoff': payoff,
         'breakeven_wr': breakeven,
         'n_candidates': len(combined),
         'base_n': len(base_all),
         'base_wr': float((base_all['label'] == 1).mean()) if len(base_all) else float('nan'),
-        'base_pf': pf_base, 'base_exp': exp_base,
+        'base_pf': pf_base, 'base_exp': exp_base, 'base_p': base_p,
         'top_n': len(top),
         'top_wr': float((top['label'] == 1).mean()) if len(top) else float('nan'),
         'top_pf': pf_top, 'top_exp': exp_top,
@@ -219,6 +233,21 @@ def main():
     cols = ['signal', 'pt', 'sl', 'breakeven_wr', 'base_wr', 'top_wr', 'top_n',
             'top_pf', 'top_exp', 'corr']
     print(ranked[cols].to_string(index=False))
+
+    # --- The primary-signal verdict. This is the column that decides whether
+    # --- any of this is worth modelling: `base_pf` and `base_p` describe the
+    # --- rule's own edge, before the ML layer touches it. A model applied to
+    # --- a primary signal with no edge is a filter on noise.
+    print(f"\n{'=' * 78}")
+    print("  PRIMARY signal edge (no ML) — ranked by net expectancy per trade")
+    print(f"{'=' * 78}")
+    prim = (df.sort_values('base_exp', ascending=False)
+              [['signal', 'pt', 'sl', 'base_n', 'base_wr', 'breakeven_wr',
+                'base_pf', 'base_exp', 'base_p']])
+    print(prim.to_string(index=False))
+    print("\n  base_p = bootstrap p-value for 'net expectancy > 0'.")
+    print("  A primary signal with base_p > 0.05 has no demonstrable edge of")
+    print("  its own; no downstream model can reliably manufacture one.")
 
     print(f"\n  Saved to {out_path}")
     print("\n  Reading this table: a high `top_wr` is only meaningful when")

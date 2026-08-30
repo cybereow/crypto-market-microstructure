@@ -29,7 +29,9 @@ from xgboost import XGBClassifier
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
-from src.labeling import donchian_breakout_entries, rsi_reversion_entries, triple_barrier_labels
+from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
+                          volatility_breakout_entries, trend_pullback_entries,
+                          range_fade_entries, triple_barrier_labels)
 from src.regime import build_btc_regime, add_alignment_features, REGIME_FEATURE_COLS
 from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
                              precision_threshold_table)
@@ -56,6 +58,12 @@ def load_btc_regime(btc_file: str):
 SIGNAL_BUILDERS = {
     'breakout': lambda df, lookback: donchian_breakout_entries(df, lookback=lookback),
     'reversion': lambda df, lookback: rsi_reversion_entries(df),
+    # Regime-conditional variants: each restricts an existing edge to the
+    # market state where its economic rationale actually applies, instead
+    # of firing in every state and diluting the average.
+    'vol_breakout': lambda df, lookback: volatility_breakout_entries(df, lookback=lookback),
+    'trend_pullback': lambda df, lookback: trend_pullback_entries(df, lookback=lookback),
+    'range_fade': lambda df, lookback: range_fade_entries(df, lookback=lookback),
 }
 
 

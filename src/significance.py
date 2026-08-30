@@ -141,6 +141,30 @@ def permutation_test(labels, selected_mask, n_iter: int = 10000,
     }
 
 
+def bootstrap_mean_pvalue(values, n_iter: int = 5000, random_state: int = 42) -> float:
+    """One-sided p-value for mean(values) > 0, by bootstrap resampling.
+
+    Used to ask the question that matters for a *primary* signal: is its
+    per-trade net expectancy distinguishable from zero? A t-test would
+    assume normality, which trade returns violate badly — triple-barrier
+    outcomes are bimodal (a cluster near +pt and one near -sl), and
+    skewed once costs are subtracted. Bootstrapping makes no shape
+    assumption, which is worth the extra compute here.
+
+    Returns the fraction of resampled means that are <= 0, i.e. small p
+    means the positive expectancy is unlikely to be sampling noise.
+    """
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size < 2:
+        return float('nan')
+
+    rng = np.random.default_rng(random_state)
+    n = values.size
+    means = values[rng.integers(0, n, size=(n_iter, n))].mean(axis=1)
+    return float((np.sum(means <= 0) + 1) / (n_iter + 1))
+
+
 def deflated_pvalue(p_value: float, n_configurations_tried: int) -> float:
     """Sidak correction for having tried several configurations.
 

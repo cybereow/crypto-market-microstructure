@@ -38,7 +38,7 @@ from xgboost import XGBClassifier
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
-from scripts.train_meta_ml import build_asset_labels, load_btc_regime
+from scripts.train_meta_ml import build_asset_labels, load_btc_regime, SIGNAL_BUILDERS
 from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
                             precision_threshold_table)
 from src.novelty import LeafNoveltyDetector
@@ -95,7 +95,7 @@ def summarize(taken: pd.DataFrame, payoff_ratio: float, cost_per_trade: float,
 def main():
     parser = argparse.ArgumentParser(description="Walk-forward validation of the meta-labeled strategy.")
     parser.add_argument("--data", type=str, nargs='+', required=True)
-    parser.add_argument("--signal", type=str, default="breakout", choices=["breakout", "reversion"])
+    parser.add_argument("--signal", type=str, default="breakout", choices=list(SIGNAL_BUILDERS))
     parser.add_argument("--lookback", type=int, default=20)
     parser.add_argument("--pt-mult", type=float, default=1.0)
     parser.add_argument("--sl-mult", type=float, default=1.0)

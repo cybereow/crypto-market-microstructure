@@ -47,6 +47,89 @@ def rsi_reversion_entries(df: pd.DataFrame, rsi_col: str = 'RSI_14',
     return entries
 
 
+def volatility_breakout_entries(df: pd.DataFrame, lookback: int = 20,
+                                 squeeze_pct: float = 0.35) -> pd.Series:
+    """Breakout, but only out of a volatility SQUEEZE.
+
+    Rationale distinct from plain Donchian: most breakouts fail because
+    they fire in already-expanded, chopping markets where the "range" is
+    just noise. Volatility is strongly autocorrelated and mean-reverting
+    in *level*, so a breakout that occurs while Bollinger width sits in
+    its own historical bottom quantile is far more likely to be the start
+    of a genuine expansion rather than another whipsaw. This is a
+    conditional filter on WHEN to trust a breakout, not a new direction rule.
+    """
+    prior_high = df['high'].rolling(lookback).max().shift(1)
+    prior_low = df['low'].rolling(lookback).min().shift(1)
+
+    # Squeeze: current BB width in the bottom quantile of its own recent history.
+    width = df['bb_width']
+    width_rank = width.rolling(100).rank(pct=True).shift(1)
+    squeezed = width_rank <= squeeze_pct
+
+    entries = pd.Series(0, index=df.index)
+    entries[(df['close'] > prior_high) & squeezed] = 1
+    entries[(df['close'] < prior_low) & squeezed] = -1
+    return entries
+
+
+def trend_pullback_entries(df: pd.DataFrame, lookback: int = 20,
+                            rsi_col: str = 'RSI_14') -> pd.Series:
+    """Buy dips *within* an established uptrend; sell rips within a downtrend.
+
+    Rationale: plain RSI reversion fades every extreme, including the ones
+    that are extreme because a strong trend is under way — those are exactly
+    the losing half. Conditioning the reversion on longer-horizon trend
+    direction keeps the "buy fear" edge but removes the trades that fight a
+    dominant move. Trend from the 20/50 SMA relationship (slow, few
+    parameters); pullback from a moderate RSI level rather than a deep one,
+    because in a real trend price rarely reaches 30.
+    """
+    uptrend = (df['close_to_sma20'] > 0) & (df['close_to_sma50'] > 0)
+    downtrend = (df['close_to_sma20'] < 0) & (df['close_to_sma50'] < 0)
+
+    rsi = df[rsi_col]
+    prev = rsi.shift(1)
+    dip = (prev < 45) & (rsi >= 45)
+    rip = (prev > 55) & (rsi <= 55)
+
+    entries = pd.Series(0, index=df.index)
+    entries[uptrend & dip] = 1
+    entries[downtrend & rip] = -1
+    return entries
+
+
+def range_fade_entries(df: pd.DataFrame, lookback: int = 20,
+                        band: float = 0.9) -> pd.Series:
+    """Fade the edges of a Bollinger range while volatility is NOT expanding.
+
+    Rationale: the mirror image of volatility_breakout_entries, and the
+    reason both are worth testing — they are mutually exclusive regimes.
+    Mean reversion at band edges pays when volatility is stable or
+    contracting, and is precisely what gets run over when it expands. The
+    ATR_ratio guard (short-horizon ATR vs long-horizon) is what separates
+    the two cases; without it this is a coin flip.
+
+    NOTE on units: `bb_position` from create_features() is
+    (close - sma20) / (2*std20), i.e. centred on 0 and roughly spanning
+    [-1, +1] — NOT a 0..1 percentile. Comparing it against 0.1/0.9 as if
+    it were a percentile fires on ~38% of all bars with a 5:1 long skew,
+    which is a range-fade signal in name only. Band edges are therefore
+    |pos| >= band, and the trade is a *cross back inside* the band so the
+    entry is a reversion rather than a stand-in for "price is extended".
+    """
+    pos = df['bb_position']
+    prev = pos.shift(1)
+    not_expanding = df['ATR_ratio'] < 1.05
+
+    entries = pd.Series(0, index=df.index)
+    # Was at/below the lower band, now crossing back up into it -> long.
+    entries[(prev <= -band) & (pos > -band) & not_expanding] = 1
+    # Was at/above the upper band, now crossing back down into it -> short.
+    entries[(prev >= band) & (pos < band) & not_expanding] = -1
+    return entries
+
+
 def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
                            pt_mult: float = 1.5, sl_mult: float = 1.0,
                            max_holding: int = 18) -> pd.DataFrame:
