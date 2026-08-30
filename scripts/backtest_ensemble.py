@@ -10,10 +10,12 @@ from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.strategies.ml_strategy import MLTradingStrategy
 from src.strategies.grid_trading import GridTradingStrategy
+from src.strategies.pairs_trading import PairsTradingStrategy
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest Regime-Aware Ensemble Strategy (ML + Grid).")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
+    parser.add_argument("--asset2", type=str, default=None, help="Filename of second asset CSV for Pairs Trading blending")
     parser.add_argument("--model", type=str, default="ml_model.json", help="Filename of the trained ML model")
     parser.add_argument("--adx-threshold", type=float, default=25.0, help="ADX threshold to determine trend vs range regime")
     args = parser.parse_args()
@@ -86,7 +88,7 @@ def main():
 
     # 3. Simulate Grid Strategy Equity Curve
     print("Running Grid Backtest for regime mapping...")
-    grid_strategy = GridTradingStrategy(num_grids=10, grid_range_pct=0.2, adaptive_atr_period=14, initial_capital=10000)
+    grid_strategy = GridTradingStrategy(num_grids=5, grid_range_pct=0.2, adaptive_atr_period=14, initial_capital=10000)
     # We only care about returns for blending
     grid_results = grid_strategy.backtest(df)
 
@@ -94,6 +96,26 @@ def main():
     common_idx = df.index.intersection(X.index).intersection(grid_results['equity_curve'].index)
     df_combined = df.loc[common_idx].copy()
     regime_aligned = regime.loc[common_idx]
+
+    # 4. Optional Pairs Strategy Blending
+    pairs_strat_returns = pd.Series(0.0, index=common_idx)
+    if args.asset2:
+        path2 = os.path.join(OUTPUT_DIR, args.asset2)
+        if os.path.exists(path2):
+            print(f"Running Pairs Backtest against {args.asset2} for blending...")
+            df2 = pd.read_csv(path2, index_col='timestamp', parse_dates=True)
+            aligned_df = pd.concat([df['close'], df2['close']], axis=1).dropna()
+            aligned_df.columns = ['S1', 'S2']
+
+            pairs_strategy = PairsTradingStrategy()
+            signals_df_full = pairs_strategy.generate_signals(aligned_df['S1'], aligned_df['S2'])
+
+            # Since ML usually trains on 80%, we only use the OOS portion for the pair returns to match ensemble behavior,
+            # but for simplicity of aligning, we compute returns for the full period and align via `common_idx`
+            pairs_results = pairs_strategy.calculate_returns(signals_df_full)
+            pairs_strat_returns = pairs_results['strat_ret'].reindex(common_idx).fillna(0)
+        else:
+            print(f"Warning: Pairs asset {args.asset2} not found, skipping pairs blending.")
 
     # Align Returns
     if 'ret_1d' not in df_combined.columns:
@@ -113,7 +135,13 @@ def main():
     ml_weight = np.clip((adx_shifted - 20) / 20, 0, 1)
     grid_weight = 1 - ml_weight
 
-    ensemble_returns = ml_weight * ml_strat_returns + grid_weight * grid_strat_returns
+    directional_returns = ml_weight * ml_strat_returns + grid_weight * grid_strat_returns
+
+    # If pairs are used, allocate 30% to Pairs and 70% to Directional (ML/Grid)
+    if args.asset2:
+        ensemble_returns = 0.3 * pairs_strat_returns + 0.7 * directional_returns
+    else:
+        ensemble_returns = directional_returns
 
     # Volatility Regime Scaling
     if 'vol_regime' in df_combined.columns:

@@ -14,9 +14,10 @@ def main():
     parser.add_argument("--grids", type=int, default=5, help="Number of grid levels")
     parser.add_argument("--range-pct", type=float, default=0.2, help="Grid range as a percentage of start price (e.g., 0.2 for +/- 10%)")
     parser.add_argument("--grid-type", type=str, default="arithmetic", choices=["arithmetic", "geometric"], help="Type of grid spacing")
-    parser.add_argument("--adaptive-atr", type=int, default=None, help="If set, uses ATR over this period to dynamically calculate grid range")
+    parser.add_argument("--adaptive-atr", type=int, default=14, help="If set, uses ATR over this period to dynamically calculate grid range")
     parser.add_argument("--atr-multiplier", type=float, default=2.0, help="Multiplier for ATR when using adaptive grid")
     parser.add_argument("--cooldown", type=int, default=20, help="Cooldown period in bars before grid can recenter again")
+    parser.add_argument("--adx-threshold", type=float, default=25.0, help="ADX threshold to stop grid trading in trends")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -26,6 +27,28 @@ def main():
 
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
+
+    # Compute ADX for regime filter
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/14, adjust=False).mean()
+
+    up_move = df['high'] - df['high'].shift(1)
+    down_move = df['low'].shift(1) - df['low']
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    plus_dm = pd.Series(plus_dm, index=df.index).ewm(alpha=1/14, adjust=False).mean()
+    minus_dm = pd.Series(minus_dm, index=df.index).ewm(alpha=1/14, adjust=False).mean()
+
+    plus_di = 100 * (plus_dm / atr)
+    minus_di = 100 * (minus_dm / atr)
+
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
+    adx = dx.ewm(alpha=1/14, adjust=False).mean()
 
     if args.adaptive_atr:
         print(f"Running Grid Trading Backtest (Grids: {args.grids}, Adaptive ATR({args.adaptive_atr}) x {args.atr_multiplier}, Type: {args.grid_type})...")
@@ -47,6 +70,15 @@ def main():
         return
 
     df_result = results['equity_curve']
+
+    # Post-filter: do not take returns during strongly trending regimes
+    adx_shifted = adx.shift(1).fillna(0)
+    df_result.loc[adx_shifted >= args.adx_threshold, 'return'] = 0.0
+
+    # Recalculate equity curve and metrics after ADX filter
+    initial_capital = args.initial_capital if hasattr(args, 'initial_capital') else 10000
+    df_result['equity'] = initial_capital * (1 + df_result['return']).cumprod()
+
     daily_rf = 0.0
     # Dynamically detect periods per year based on time frequency
     diffs = df_result.index.to_series().diff().dropna()

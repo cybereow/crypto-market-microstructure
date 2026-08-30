@@ -1,1 +1,1 @@
-OBV_sma_20,ATR_14,vol_regime,roc_10,close_to_sma50,dow,bb_pct,bb_width,hour,RSI_70
+RSI_70,MACD_12_26_9,ATR_ratio,OBV_sma_70,roc_20,ret_3d,ATR_50,RSI_14,vol_change_1d,OBV_sma_20
