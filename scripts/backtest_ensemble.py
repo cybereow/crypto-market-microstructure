@@ -82,7 +82,7 @@ def main():
         sys.exit(1)
 
     ml_strategy = MLTradingStrategy(model)
-    ml_signals = ml_strategy.generate_signals(X)
+    ml_signals = ml_strategy.generate_signals(X, close_series=df['close'])
 
     # 3. Simulate Grid Strategy Equity Curve
     print("Running Grid Backtest for regime mapping...")
@@ -129,7 +129,14 @@ def main():
     buy_hold_return = (df_combined['close'].iloc[-1] / df_combined['close'].iloc[0]) - 1
 
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (df_combined['ensemble_ret'].mean() - daily_rf) / (df_combined['ensemble_ret'].std() + 1e-9)
+    diffs = df_combined.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (df_combined['ensemble_ret'].mean() - daily_rf) / (df_combined['ensemble_ret'].std() + 1e-9)
     roll_max = df_combined['cum_ret'].cummax()
     drawdown = df_combined['cum_ret'] / roll_max - 1.0
     max_dd = drawdown.min()

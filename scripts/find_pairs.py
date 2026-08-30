@@ -14,7 +14,7 @@ from src.config import OUTPUT_DIR
 def calculate_hurst_exponent(ts):
     """Calculates the Hurst Exponent of a time series."""
     lags = range(2, 100)
-    tau = [np.sqrt(np.std(np.subtract(ts[lag:], ts[:-lag]))) for lag in lags]
+    tau = [np.std(np.subtract(ts[lag:], ts[:-lag])) for lag in lags]
     poly = np.polyfit(np.log(lags), np.log(tau), 1)
     return poly[0] * 2.0
 
@@ -52,12 +52,17 @@ def main():
     parser = argparse.ArgumentParser(description="Find cointegrated pairs among downloaded CSV data.")
     parser.add_argument("--directory", type=str, default=OUTPUT_DIR, help="Directory containing price CSV files")
     parser.add_argument("--p-value", type=float, default=0.10, help="P-value threshold for cointegration")
+    parser.add_argument("--timeframe", type=str, default=None, help="Filter CSV files by timeframe (e.g. 4h, 1d)")
     args = parser.parse_args()
 
-    # Load all CSVs in the directory
-    csv_files = glob.glob(os.path.join(args.directory, "*.csv"))
+    # Load all CSVs in the directory, filtered by timeframe if provided
+    if args.timeframe:
+        csv_files = glob.glob(os.path.join(args.directory, f"*_{args.timeframe}.csv"))
+    else:
+        csv_files = glob.glob(os.path.join(args.directory, "*.csv"))
+
     if not csv_files:
-        print(f"No CSV files found in {args.directory}")
+        print(f"No CSV files found in {args.directory} matching timeframe {args.timeframe}")
         sys.exit(1)
 
     prices = {}

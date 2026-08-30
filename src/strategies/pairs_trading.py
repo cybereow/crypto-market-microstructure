@@ -72,12 +72,11 @@ class PairsTradingStrategy:
         spread_lag = df['spread'].shift(1)
         spread_diff = df['spread'].diff()
 
-        # Calculate half life over a rolling window or expanding window.
-        # For performance, we'll calculate static half-life over the whole series and use it as the window
-        # (Alternatively, could do a rolling half-life, but static is standard for adaptive window sizing)
+        # Calculate half life over the in-sample portion to prevent lookahead bias
+        split_idx = int(len(df) * 0.8)
 
         # Dropna for regression
-        reg_df = pd.DataFrame({'y': spread_diff, 'x': spread_lag}).dropna()
+        reg_df = pd.DataFrame({'y': spread_diff.iloc[:split_idx], 'x': spread_lag.iloc[:split_idx]}).dropna()
         if len(reg_df) > 10:
             x = reg_df['x'].values
             y = reg_df['y'].values
@@ -89,7 +88,8 @@ class PairsTradingStrategy:
 
             if beta_hl < 0:
                 half_life = -np.log(2) / beta_hl
-                window = max(10, int(half_life * 2))
+                # Cap the window to prevent it from exceeding 25% of available data or 120 bars max
+                window = min(max(10, int(half_life * 2)), min(len(df) // 4, 120))
             else:
                 window = self.window
         else:

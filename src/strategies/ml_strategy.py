@@ -12,7 +12,7 @@ class MLTradingStrategy:
         self.stop_loss_pct = stop_loss_pct
         self.max_daily_dd = max_daily_dd
 
-    def generate_signals(self, X: pd.DataFrame, confidence_threshold=0.55) -> pd.DataFrame:
+    def generate_signals(self, X: pd.DataFrame, confidence_threshold=0.40, close_series=None) -> pd.DataFrame:
         """
         Returns DataFrame with 'position' (direction) and 'size' (Kelly fraction).
         3-class model: 0=down, 1=flat, 2=up.
@@ -24,22 +24,29 @@ class MLTradingStrategy:
             position = pd.Series(0.0, index=X.index, name='position')
             size = pd.Series(0.0, index=X.index, name='size')
 
+            if close_series is not None:
+                sma_50 = close_series.rolling(50).mean()
+
             if n_classes == 3:
                 prob_up = probs[:, 2]
                 prob_down = probs[:, 0]
-                prob_flat = probs[:, 1]
 
                 for i in range(len(X)):
-                    pu, pd_val, pf = prob_up[i], prob_down[i], prob_flat[i]
-                    if pu >= confidence_threshold and pu > pd_val and pu > pf:
+                    pu, pd_val = prob_up[i], prob_down[i]
+                    if pu >= confidence_threshold and pu > pd_val:
                         position.iloc[i] = 1
                         # Half-Kelly: (p * b - q) / b, capped, then halved
                         edge = pu - (1 - pu)
                         size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
-                    elif pd_val >= confidence_threshold and pd_val > pu and pd_val > pf:
+                    elif pd_val >= confidence_threshold and pd_val > pu:
                         position.iloc[i] = -1
                         edge = pd_val - (1 - pd_val)
                         size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
+
+                        # Trend Filter for Shorts
+                        if close_series is not None and close_series.iloc[i] >= sma_50.iloc[i]:
+                            position.iloc[i] = 0
+                            size.iloc[i] = 0.0
             else:
                 # 2-class fallback
                 prob_up = probs[:, 1]
@@ -52,6 +59,11 @@ class MLTradingStrategy:
                         position.iloc[i] = -1
                         edge = (1 - prob_up[i]) - prob_up[i]
                         size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
+
+                        # Trend Filter for Shorts
+                        if close_series is not None and close_series.iloc[i] >= sma_50.iloc[i]:
+                            position.iloc[i] = 0
+                            size.iloc[i] = 0.0
         else:
             predictions = self.model.predict(X)
             position = pd.Series(predictions, index=X.index, name='position')

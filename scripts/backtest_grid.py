@@ -11,12 +11,12 @@ from src.strategies.grid_trading import GridTradingStrategy
 def main():
     parser = argparse.ArgumentParser(description="Backtest Grid Trading Strategy.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
-    parser.add_argument("--grids", type=int, default=10, help="Number of grid levels")
+    parser.add_argument("--grids", type=int, default=5, help="Number of grid levels")
     parser.add_argument("--range-pct", type=float, default=0.2, help="Grid range as a percentage of start price (e.g., 0.2 for +/- 10%)")
     parser.add_argument("--grid-type", type=str, default="arithmetic", choices=["arithmetic", "geometric"], help="Type of grid spacing")
     parser.add_argument("--adaptive-atr", type=int, default=None, help="If set, uses ATR over this period to dynamically calculate grid range")
     parser.add_argument("--atr-multiplier", type=float, default=2.0, help="Multiplier for ATR when using adaptive grid")
-    parser.add_argument("--cooldown", type=int, default=0, help="Cooldown period in bars before grid can recenter again")
+    parser.add_argument("--cooldown", type=int, default=20, help="Cooldown period in bars before grid can recenter again")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -48,7 +48,15 @@ def main():
 
     df_result = results['equity_curve']
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (df_result['return'].mean() - daily_rf) / (df_result['return'].std() + 1e-9)
+    # Dynamically detect periods per year based on time frequency
+    diffs = df_result.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (df_result['return'].mean() - daily_rf) / (df_result['return'].std() + 1e-9)
     roll_max = df_result['equity'].cummax()
     drawdown = df_result['equity'] / roll_max - 1.0
     max_dd = drawdown.min()

@@ -20,10 +20,10 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     data['ret_3d'] = data['close'].pct_change(3)
     data['ret_5d'] = data['close'].pct_change(5)
 
-    # Trend: MACD
+    # Trend: MACD (normalized)
     ema_12 = data['close'].ewm(span=12, adjust=False).mean()
     ema_26 = data['close'].ewm(span=26, adjust=False).mean()
-    data['MACD_12_26_9'] = ema_12 - ema_26
+    data['MACD_12_26_9'] = (ema_12 - ema_26) / (data['close'] + 1e-9)
     data['MACDs_12_26_9'] = data['MACD_12_26_9'].ewm(span=9, adjust=False).mean()
     data['MACDh_12_26_9'] = data['MACD_12_26_9'] - data['MACDs_12_26_9']
 
@@ -42,29 +42,30 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     rs_w = ema_up_w / (ema_down_w + 1e-9)
     data['RSI_70'] = 100 - (100 / (1 + rs_w))
 
-    # Volatility: ATR and Bollinger Bands
+    # Volatility: ATR (normalized) and Bollinger Bands
     high_low = data['high'] - data['low']
     high_close = np.abs(data['high'] - data['close'].shift())
     low_close = np.abs(data['low'] - data['close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     true_range = ranges.max(axis=1)
-    data['ATR_14'] = true_range.rolling(14).mean()
+    data['ATR_14'] = true_range.rolling(14).mean() / (data['close'] + 1e-9)
 
     sma_20 = data['close'].rolling(window=20).mean()
     std_20 = data['close'].rolling(window=20).std()
-    data['BBU_20_2.0'] = sma_20 + (std_20 * 2)
-    data['BBL_20_2.0'] = sma_20 - (std_20 * 2)
-    data['BBM_20_2.0'] = sma_20
-    data['bb_width'] = (data['BBU_20_2.0'] - data['BBL_20_2.0']) / (data['BBM_20_2.0'] + 1e-9)
-    data['bb_pct'] = (data['close'] - data['BBL_20_2.0']) / (data['BBU_20_2.0'] - data['BBL_20_2.0'] + 1e-9)
+    bbu_20 = sma_20 + (std_20 * 2)
+    bbl_20 = sma_20 - (std_20 * 2)
+    data['bb_width'] = (bbu_20 - bbl_20) / (sma_20 + 1e-9)
+    data['bb_pct'] = (data['close'] - bbl_20) / (bbu_20 - bbl_20 + 1e-9)
+    # bb_position normalizes the close price against the Bollinger Bands range [-1, 1]
+    data['bb_position'] = (data['close'] - sma_20) / (std_20 * 2 + 1e-9)
 
     # Moving Average Distance
-    data['sma_10'] = data['close'].rolling(window=10).mean()
-    data['sma_50'] = data['close'].rolling(window=50).mean()
-    data['sma_dist'] = data['sma_10'] / data['sma_50'] - 1
+    sma_10 = data['close'].rolling(window=10).mean()
+    sma_50 = data['close'].rolling(window=50).mean()
+    data['sma_dist'] = sma_10 / sma_50 - 1
 
     # Volatility Ratio
-    data['ATR_50'] = true_range.rolling(50).mean()
+    data['ATR_50'] = true_range.rolling(50).mean() / (data['close'] + 1e-9)
     data['ATR_ratio'] = data['ATR_14'] / (data['ATR_50'] + 1e-9)
 
     # Realized volatility (log returns)
@@ -75,7 +76,7 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Mean reversion signals
     data['close_to_sma20'] = data['close'] / (sma_20 + 1e-9) - 1
-    data['close_to_sma50'] = data['close'] / (data['sma_50'] + 1e-9) - 1
+    data['close_to_sma50'] = data['close'] / (sma_50 + 1e-9) - 1
 
     # Momentum features
     data['roc_10'] = data['close'].pct_change(10)

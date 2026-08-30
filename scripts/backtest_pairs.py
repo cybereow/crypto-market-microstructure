@@ -78,7 +78,14 @@ def main():
     win_rate = (results_df['strat_ret'] > 0).sum() / (results_df['strat_ret'] != 0).sum() if (results_df['strat_ret'] != 0).sum() > 0 else 0
 
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (results_df['strat_ret'].mean() - daily_rf) / (results_df['strat_ret'].std() + 1e-9)
+    diffs = results_df.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (results_df['strat_ret'].mean() - daily_rf) / (results_df['strat_ret'].std() + 1e-9)
     roll_max = results_df['cum_ret'].cummax()
     drawdown = results_df['cum_ret'] / roll_max - 1.0
     max_dd = drawdown.min()

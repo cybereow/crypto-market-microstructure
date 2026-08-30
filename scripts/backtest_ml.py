@@ -49,7 +49,7 @@ def main():
     model.load_model(model_path)
 
     strategy = MLTradingStrategy(model)
-    signals = strategy.generate_signals(X_oos, confidence_threshold=args.confidence)
+    signals = strategy.generate_signals(X_oos, confidence_threshold=args.confidence, close_series=oos_df['close'])
     oos_results = strategy.calculate_returns(oos_df, signals)
     oos_results['cum_ret'] = (1 + oos_results['strat_ret']).cumprod()
 
@@ -60,7 +60,14 @@ def main():
     win_rate = (oos_results.loc[active, 'strat_ret'] > 0).mean() if active.sum() > 0 else 0
 
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (oos_results['strat_ret'].mean() - daily_rf) / (oos_results['strat_ret'].std() + 1e-9)
+    diffs = oos_results.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (oos_results['strat_ret'].mean() - daily_rf) / (oos_results['strat_ret'].std() + 1e-9)
 
     roll_max = oos_results['cum_ret'].cummax()
     drawdown = oos_results['cum_ret'] / roll_max - 1.0
