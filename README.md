@@ -1,5 +1,41 @@
 # Trading Bot — v2.1 (Machine Learning & Quant Strategies)
 
+> ## What this repository actually demonstrates
+>
+> This is a quantitative research log, not a "profitable trading bot" — and that
+> distinction is the point. Every strategy tested here is documented with its
+> real, walk-forward, cost-adjusted result, including the ones that failed and
+> the one significant finding that got *retracted* once a stricter statistical
+> test was applied (see §7). If you're evaluating this as engineering/research
+> work rather than as an investment product, the interesting parts are:
+>
+> - **Statistical rigor over a good-looking number.** Bootstrap and permutation
+>   significance testing, deflated p-values for multiple-testing correction,
+>   purged/embargoed walk-forward cross-validation — built from scratch in
+>   `src/significance.py` and used to reject the project's own best-looking
+>   result once it didn't survive scrutiny (§7).
+> - **Tick-level market data engineering.** A chunked, memory-safe processor
+>   for Binance's raw order-book tick archive (~20M events/day/asset) that
+>   derives both an order-flow-imbalance signal *and* an OHLC price series
+>   directly from the same tick stream — no separate download, and a unit
+>   test that locks in correctness across chunk/day boundaries
+>   (`scripts/download_l2_obi.py`, `tests/test_download_l2_obi.py`).
+> - **Meta-labeling ML pipeline** (Lopez de Prado style): triple-barrier
+>   labeling, an XGBoost classifier trained to answer "will this specific
+>   trade setup work" rather than "which way will price move," walk-forward
+>   validated and cost-adjusted (`src/labeling.py`, `scripts/train_meta_ml.py`).
+> - **Execution-realism modeling**, not just backtest P&L: a maker-order queue
+>   fill simulator (`src/execution.py`), a two-sided market-making simulator
+>   with inventory/signal-driven quote skew (`src/market_making.py`), and a
+>   live shadow paper-trader that checks a backtest's assumptions against real
+>   exchange quotes without ever risking capital (`src/paper_trading.py`).
+> - **96 passing unit tests** covering the statistical and execution logic,
+>   not just the happy path.
+>
+> Stack: Python, pandas/numpy, XGBoost, scikit-learn, ccxt, statsmodels/scipy.
+> Open to contract/freelance data-engineering and quant-research work —
+> reach out via GitHub.
+
 این پروژه شامل یک فریم‌ورک پیشرفته برای استراتژی‌های کمی (Quantitative) و الگوریتم‌های مبتنی بر ماشین‌لرنینگ جهت معامله در بازارهای مالی است.
 
 ## استراتژی‌های پیاده‌سازی شده
