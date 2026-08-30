@@ -88,14 +88,12 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
         data['vol_ratio'] = data['volume'] / (data['vol_sma_20'] + 1e-9)
 
         obv = (np.sign(data['close'].diff()) * data['volume']).fillna(0).cumsum()
-        data['OBV'] = obv
         data['OBV_sma_20'] = obv.rolling(window=20).mean()
         data['OBV_dist'] = (obv - data['OBV_sma_20']) / (data['OBV_sma_20'].replace(0, 1e-9))
         data['OBV_sma_70'] = obv.rolling(window=70).mean()
         data['OBV_trend'] = (obv - data['OBV_sma_70']) / (data['OBV_sma_70'].replace(0, 1e-9))
 
     if 'funding_rate' in data.columns:
-        data['funding_rate_raw'] = data['funding_rate']
         data['funding_rate_diff'] = data['funding_rate'].diff()
         data['funding_sma_5'] = data['funding_rate'].rolling(window=5).mean()
 
@@ -104,6 +102,16 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
         data['obi_imbalance'] = data['obi'] - 0.5
         data['obi_diff'] = data['obi'].diff()
         data['obi_sma_5'] = data['obi'].rolling(window=5).mean()
+
+    # Day of week and hour
+    data['dow'] = data.index.dayofweek
+    data['hour'] = data.index.hour
+
+    # Garman-Klass volatility
+    log_hl = np.log(data['high'] / data['low'])
+    log_co = np.log(data['close'] / data['open'])
+    rs = 0.5 * log_hl**2 - (2 * np.log(2) - 1) * log_co**2
+    data['garman_klass_vol'] = np.sqrt(rs)
 
     data.dropna(inplace=True)
     return data
@@ -165,8 +173,20 @@ def main():
     print("Creating features.")
     df_features = create_features(df)
 
+    # Auto-scale threshold for timeframe
+    import re
+    threshold = args.threshold
+    tf_match = re.search(r'(\d+)(h|m)', args.data)
+    if tf_match:
+        val = int(tf_match.group(1))
+        unit = tf_match.group(2)
+        if unit == 'h':
+            threshold = threshold * np.sqrt(val / 24)
+        elif unit == 'm':
+            threshold = threshold * np.sqrt(val / (24 * 60))
+
     # 3-class target
-    df_features['target'] = create_target(df_features, threshold_pct=args.threshold)
+    df_features['target'] = create_target(df_features, threshold_pct=threshold)
     df_features.dropna(subset=['target'], inplace=True)
 
     # Drop rows where future return is NaN (last row)
@@ -205,8 +225,8 @@ def main():
     feat_imp = pd.DataFrame({'Feature': features, 'Importance': importance})
     feat_imp = feat_imp.sort_values(by='Importance', ascending=False)
 
-    top_features = feat_imp.head(20)['Feature'].tolist()
-    print(f"Selected top 20 features: {top_features}")
+    top_features = feat_imp.head(10)['Feature'].tolist()
+    print(f"Selected top 10 features: {top_features}")
     X_train_full = X_train_full[top_features]
 
     # Purged walk-forward CV
@@ -226,14 +246,14 @@ def main():
     sample_weights = y_train_full.map(class_weight_map).values
 
     param_distributions = {
-        'max_depth': [3, 4, 5, 6],
-        'n_estimators': [100, 200, 300],
+        'max_depth': [2, 3, 4],
+        'n_estimators': [50, 100, 200],
         'learning_rate': [0.01, 0.03, 0.05],
         'subsample': [0.6, 0.7, 0.8],
         'colsample_bytree': [0.5, 0.6, 0.8],
-        'min_child_weight': [3, 5, 10],
-        'reg_alpha': [0, 0.1, 1.0],
-        'reg_lambda': [1.0, 3.0, 5.0],
+        'min_child_weight': [5, 10, 20],
+        'reg_alpha': [0.1, 1.0, 5.0],
+        'reg_lambda': [3.0, 5.0, 10.0],
         'gamma': [0, 0.1, 0.5],
     }
 
@@ -245,7 +265,7 @@ def main():
     search = RandomizedSearchCV(
         base_model,
         param_distributions=param_distributions,
-        n_iter=30,
+        n_iter=15,
         scoring='f1_macro',
         cv=splits,
         random_state=42,
@@ -273,7 +293,7 @@ def main():
     # Save threshold so backtest uses the same one
     threshold_path = os.path.join(OUTPUT_DIR, "ml_threshold.txt")
     with open(threshold_path, 'w') as f:
-        f.write(str(args.threshold))
+        f.write(str(threshold))
 
     model_path = os.path.join(OUTPUT_DIR, args.model_out)
     model.save_model(model_path)

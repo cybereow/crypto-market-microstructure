@@ -62,8 +62,14 @@ def main():
     print("Creating advanced features for ML strategy...")
     df_features = create_features(df)
 
-    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
-    features = [col for col in df_features.columns if col not in exclude_cols]
+    features_path = os.path.join(OUTPUT_DIR, "ml_features.txt")
+    if os.path.exists(features_path):
+        with open(features_path, 'r') as f:
+            features = [feat.strip() for feat in f.read().split(',') if feat.strip()]
+        print(f"Loaded {len(features)} selected features from ml_features.txt")
+    else:
+        exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
+        features = [col for col in df_features.columns if col not in exclude_cols]
 
     X = df_features[features]
 
@@ -99,13 +105,23 @@ def main():
     grid_strat_returns = grid_results['equity_curve'].loc[common_idx]['return'].fillna(0)
 
     # Ensemble Allocation:
-    # If Regime == 1 (Trend) -> Allocation = 100% ML
-    # If Regime == 0 (Range) -> Allocation = 100% Grid
+    # Weighted blending based on ADX
 
-    # Ensure signal doesn't look ahead: shift regime by 1 day
-    regime_signal = regime_aligned.shift(1).fillna(0)
+    # Ensure signals don't look ahead: shift adx by 1 period
+    adx_shifted = adx.loc[common_idx].shift(1).fillna(0)
 
-    ensemble_returns = np.where(regime_signal == 1, ml_strat_returns, grid_strat_returns)
+    ml_weight = np.clip((adx_shifted - 20) / 20, 0, 1)
+    grid_weight = 1 - ml_weight
+
+    ensemble_returns = ml_weight * ml_strat_returns + grid_weight * grid_strat_returns
+
+    # Volatility Regime Scaling
+    if 'vol_regime' in df_combined.columns:
+        vol_regime_shifted = df_combined['vol_regime'].shift(1).fillna(1.0)
+        # Scale returns by 0.5 when short-term vol is 2x long-term vol
+        vol_scaler = np.where(vol_regime_shifted > 2.0, 0.5, 1.0)
+        ensemble_returns = ensemble_returns * vol_scaler
+
     df_combined['ensemble_ret'] = ensemble_returns
     df_combined['cum_ret'] = (1 + df_combined['ensemble_ret']).cumprod()
 

@@ -2,13 +2,15 @@ import pandas as pd
 import numpy as np
 
 class PairsTradingStrategy:
-    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, z_stop_loss=4.0, window=30, fee_pct=0.001, slippage_pct=0.001):
+    def __init__(self, z_entry_threshold=2.0, z_exit_threshold=0.5, z_stop_loss=4.0, window=30, fee_pct=0.001, slippage_pct=0.001, delta=1e-5, vt=1e-3):
         self.z_entry_threshold = z_entry_threshold
         self.z_exit_threshold = z_exit_threshold
         self.z_stop_loss = z_stop_loss
         self.window = window
         self.fee_pct = fee_pct
         self.slippage_pct = slippage_pct
+        self.delta = delta
+        self.vt = vt
 
     def generate_signals(self, s1: pd.Series, s2: pd.Series) -> pd.DataFrame:
         """
@@ -21,9 +23,7 @@ class PairsTradingStrategy:
         # State-Space Kalman Filter for dynamic Hedge Ratio (beta)
         # We assume S1 = beta * S2 + error
         # Beta is a random walk state
-        delta = 1e-5
-        wt = delta / (1 - delta) * np.eye(2) # Process noise covariance
-        vt = 1e-3 # Measurement noise variance
+        wt = self.delta / (1 - self.delta) * np.eye(2) # Process noise covariance
         theta = np.zeros((2, 1)) # State vector [alpha, beta]
         P = np.eye(2) * 1000 # State covariance matrix (High initial uncertainty for fast convergence)
         R = None # Expected variance of measurement
@@ -45,7 +45,7 @@ class PairsTradingStrategy:
             yhat = x.T.dot(theta)[0, 0]
 
             # Measurement variance
-            Q = x.T.dot(R).dot(x)[0, 0] + vt
+            Q = x.T.dot(R).dot(x)[0, 0] + self.vt
 
             # Error
             e = y - yhat
@@ -67,8 +67,38 @@ class PairsTradingStrategy:
         # This allows the strategy to react immediately to structural breaks.
         df['spread'] = df['S1'] - (df['beta'] * df['S2'])
 
-        rolling_spread_mean = df['spread'].rolling(window=self.window).mean()
-        rolling_spread_std = df['spread'].rolling(window=self.window).std()
+        # Adaptive z-score window based on Ornstein-Uhlenbeck half-life
+        # OLS regression: Δspread ~ spread_lag
+        spread_lag = df['spread'].shift(1)
+        spread_diff = df['spread'].diff()
+
+        # Calculate half life over a rolling window or expanding window.
+        # For performance, we'll calculate static half-life over the whole series and use it as the window
+        # (Alternatively, could do a rolling half-life, but static is standard for adaptive window sizing)
+
+        # Dropna for regression
+        reg_df = pd.DataFrame({'y': spread_diff, 'x': spread_lag}).dropna()
+        if len(reg_df) > 10:
+            x = reg_df['x'].values
+            y = reg_df['y'].values
+
+            # Simple linear regression slope
+            cov = np.cov(x, y)[0, 1]
+            var = np.var(x)
+            beta_hl = cov / (var + 1e-9)
+
+            if beta_hl < 0:
+                half_life = -np.log(2) / beta_hl
+                window = max(10, int(half_life * 2))
+            else:
+                window = self.window
+        else:
+            window = self.window
+
+        print(f"Adaptive Window calculated as: {window} (fallback: {self.window})")
+
+        rolling_spread_mean = df['spread'].rolling(window=window).mean()
+        rolling_spread_std = df['spread'].rolling(window=window).std()
 
         # Z-score of the spread
         df['zscore'] = (df['spread'] - rolling_spread_mean) / rolling_spread_std

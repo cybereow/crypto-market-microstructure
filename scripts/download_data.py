@@ -8,7 +8,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 
-def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 1000) -> pd.DataFrame:
+def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 1000, since: str = None) -> pd.DataFrame:
     """Fetch OHLCV data from an exchange using ccxt."""
     try:
         exchange_class = getattr(ccxt, exchange_id)
@@ -17,14 +17,41 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 1000
         print(f"Error: Exchange '{exchange_id}' not found in ccxt.")
         sys.exit(1)
 
-    try:
-        print(f"Fetching {limit} bars of {timeframe} data for {symbol} from {exchange_id}...")
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-    except Exception as e:
-        print(f"Error fetching data: {e}")
-        sys.exit(1)
+    since_ms = None
+    if since:
+        since_ms = exchange.parse8601(since + 'T00:00:00Z')
 
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    all_ohlcv = []
+
+    # Pagination loop
+    while len(all_ohlcv) < limit:
+        remaining_limit = limit - len(all_ohlcv)
+        fetch_limit = min(remaining_limit, 1000) # Most exchanges limit 1000 per request
+
+        try:
+            print(f"Fetching {fetch_limit} bars of {timeframe} data for {symbol} from {exchange_id} (since: {exchange.iso8601(since_ms) if since_ms else 'latest'})...")
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=fetch_limit)
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+            break
+
+        if not ohlcv:
+            print("No more data available from exchange.")
+            break
+
+        all_ohlcv.extend(ohlcv)
+
+        # Determine the next `since` timestamp
+        # The last candle's timestamp + 1 ms to avoid fetching the same candle again
+        last_candle_ts = ohlcv[-1][0]
+        since_ms = last_candle_ts + 1
+
+        # If we got less than requested limit, we've likely hit the end of available history
+        if len(ohlcv) < fetch_limit:
+            print("Reached the end of available history.")
+            break
+
+    df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
     return df
@@ -72,10 +99,11 @@ def main():
     parser.add_argument("--symbol", type=str, default="BTC/USDT", help="Trading pair symbol")
     parser.add_argument("--timeframe", type=str, default="1d", help="Timeframe (e.g. 1d, 1h, 15m)")
     parser.add_argument("--limit", type=int, default=1000, help="Number of candles to fetch (max limits apply per exchange)")
+    parser.add_argument("--since", type=str, default=None, help="Start date in ISO format (e.g. 2022-01-01)")
     parser.add_argument("--include-funding", action="store_true", help="Attempt to fetch and merge funding rates (Requires Futures symbol e.g. BTC/USDT:USDT)")
     args = parser.parse_args()
 
-    df = fetch_ohlcv(args.exchange, args.symbol, args.timeframe, args.limit)
+    df = fetch_ohlcv(args.exchange, args.symbol, args.timeframe, args.limit, args.since)
 
     if args.include_funding:
         # For funding rates, ccxt usually requires the perpetual swap symbol format like "BTC/USDT:USDT" or "BTC/USD"

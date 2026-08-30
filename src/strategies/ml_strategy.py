@@ -35,11 +35,11 @@ class MLTradingStrategy:
                         position.iloc[i] = 1
                         # Half-Kelly: (p * b - q) / b, capped, then halved
                         edge = pu - (1 - pu)
-                        size.iloc[i] = min(np.clip(edge / 2, 0.1, 1.0), self.max_position)
+                        size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
                     elif pd_val >= confidence_threshold and pd_val > pu and pd_val > pf:
                         position.iloc[i] = -1
                         edge = pd_val - (1 - pd_val)
-                        size.iloc[i] = min(np.clip(edge / 2, 0.1, 1.0), self.max_position)
+                        size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
             else:
                 # 2-class fallback
                 prob_up = probs[:, 1]
@@ -47,11 +47,11 @@ class MLTradingStrategy:
                     if prob_up[i] >= confidence_threshold:
                         position.iloc[i] = 1
                         edge = prob_up[i] - (1 - prob_up[i])
-                        size.iloc[i] = min(np.clip(edge / 2, 0.1, 1.0), self.max_position)
+                        size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
                     elif prob_up[i] <= (1 - confidence_threshold):
                         position.iloc[i] = -1
                         edge = (1 - prob_up[i]) - prob_up[i]
-                        size.iloc[i] = min(np.clip(edge / 2, 0.1, 1.0), self.max_position)
+                        size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
         else:
             predictions = self.model.predict(X)
             position = pd.Series(predictions, index=X.index, name='position')
@@ -76,27 +76,72 @@ class MLTradingStrategy:
         cost_per_trade = self.fee_pct + self.slippage_pct
         data['strat_ret'] = (data['weighted_pos'] * data['ret_1d']) - (data['trade'] * cost_per_trade)
 
-        # Stop loss: if cumulative return from entry drops below threshold, flatten
-        data['cum_ret'] = (1 + data['strat_ret']).cumprod()
-        peak = data['cum_ret'].expanding().max()
-        drawdown = data['cum_ret'] / peak - 1
-
-        # Apply trailing stop: zero out returns after stop triggered until position changes
+        # Apply trailing stop and daily drawdown limits iteratively
         stopped = False
-        stop_price_level = 0.0
         adjusted_rets = data['strat_ret'].copy()
 
-        for i in range(1, len(data)):
+        current_equity = 1.0
+        peak_equity = 1.0
+
+        # Track daily drawdown
+        dates = data.index.date
+        current_day = None
+        day_start_equity = 1.0
+        daily_stopped = False
+
+        for i in range(len(data)):
+            # Daily reset
+            if dates[i] != current_day:
+                current_day = dates[i]
+                day_start_equity = current_equity
+                daily_stopped = False
+
+            # If stopped by trailing stop, wait for position change
             if stopped:
-                if data['position'].iloc[i] != data['position'].iloc[i-1]:
+                if i > 0 and data['position'].iloc[i] != data['position'].iloc[i-1] and data['position'].iloc[i] != 0:
                     stopped = False
+                    peak_equity = current_equity # Reset peak on new position
                 else:
                     adjusted_rets.iloc[i] = 0
-                    continue
 
-            if drawdown.iloc[i] < -self.stop_loss_pct:
-                stopped = True
+            # If daily stopped, stay flat for the rest of the day
+            if daily_stopped:
                 adjusted_rets.iloc[i] = 0
+
+            # Update equity with (potentially zeroed) return
+            ret = adjusted_rets.iloc[i]
+            current_equity *= (1 + ret)
+
+            # Check trailing stop (only if we have a position)
+            if data['position'].iloc[i] != 0 and not stopped and not daily_stopped:
+                if current_equity > peak_equity:
+                    peak_equity = current_equity
+
+                drawdown = (current_equity / peak_equity) - 1
+
+                if drawdown < -self.stop_loss_pct:
+                    stopped = True
+                    # Stop fires: zero out current return, but add transaction cost
+                    adjusted_rets.iloc[i] = 0
+                    # Charge fee for exiting position
+                    adjusted_rets.iloc[i] -= abs(data['weighted_pos'].iloc[i]) * cost_per_trade
+                    # Recalculate equity for this step after fee
+                    # Back out the previous current_equity calculation
+                    current_equity = current_equity / (1 + ret)
+                    current_equity *= (1 + adjusted_rets.iloc[i])
+
+            # Check daily drawdown
+            if not daily_stopped:
+                daily_dd = (current_equity / day_start_equity) - 1
+                if daily_dd < -self.max_daily_dd:
+                    daily_stopped = True
+                    # Exit immediately
+                    if data['position'].iloc[i] != 0 and not stopped:
+                        # If not already stopped out, charge fee for flattening here
+                        adjusted_rets.iloc[i] -= abs(data['weighted_pos'].iloc[i]) * cost_per_trade
+                        # Recalculate equity
+                        current_equity = current_equity / (1 + ret)
+                        current_equity *= (1 + adjusted_rets.iloc[i])
 
         data['strat_ret'] = adjusted_rets
         data['cum_ret'] = (1 + data['strat_ret']).cumprod()

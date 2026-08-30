@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--z-entry", type=float, default=2.0, help="Z-Score entry threshold")
     parser.add_argument("--z-exit", type=float, default=0.5, help="Z-Score exit threshold")
     parser.add_argument("--window", type=int, default=30, help="Rolling window for Z-Score calculation")
+    parser.add_argument("--delta", type=float, default=1e-5, help="Kalman filter process noise (delta)")
+    parser.add_argument("--vt", type=float, default=1e-3, help="Kalman filter measurement noise (vt)")
     args = parser.parse_args()
 
     path1 = os.path.join(OUTPUT_DIR, args.asset1)
@@ -37,9 +39,15 @@ def main():
     s2_full = aligned_df['S2']
 
     print(f"Backtesting Pairs Strategy on Out-of-Sample data for {args.asset1} and {args.asset2}")
-    print(f"Params: Z-Entry={args.z_entry}, Z-Exit={args.z_exit}, Window={args.window}")
+    print(f"Params: Z-Entry={args.z_entry}, Z-Exit={args.z_exit}, Window={args.window}, Delta={args.delta}, Vt={args.vt}")
 
-    strategy = PairsTradingStrategy(z_entry_threshold=args.z_entry, z_exit_threshold=args.z_exit, window=args.window)
+    strategy = PairsTradingStrategy(
+        z_entry_threshold=args.z_entry,
+        z_exit_threshold=args.z_exit,
+        window=args.window,
+        delta=args.delta,
+        vt=args.vt
+    )
 
     # Generate signals on FULL data so rolling Beta warm-up is completely accurate.
     signals_df_full = strategy.generate_signals(s1_full, s2_full)

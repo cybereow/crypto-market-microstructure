@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 class GridTradingStrategy:
-    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0, recenter_cooldown=0):
+    def __init__(self, num_grids=10, grid_range_pct=0.2, initial_capital=10000, fee_pct=0.001, slippage_pct=0.001, grid_type="arithmetic", adaptive_atr_period=None, atr_multiplier=2.0, recenter_cooldown=0, min_spacing_pct=0.005):
         self.num_grids = num_grids
         self.grid_range_pct = grid_range_pct
         self.initial_capital = initial_capital
@@ -12,6 +12,7 @@ class GridTradingStrategy:
         self.adaptive_atr_period = adaptive_atr_period
         self.atr_multiplier = atr_multiplier
         self.recenter_cooldown = recenter_cooldown
+        self.min_spacing_pct = min_spacing_pct
 
     def backtest(self, df: pd.DataFrame) -> dict:
         """
@@ -32,7 +33,7 @@ class GridTradingStrategy:
             low_close = np.abs(df['low'] - df['close'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = ranges.max(axis=1)
-            atr = true_range.rolling(self.adaptive_atr_period).mean().bfill()
+            atr = true_range.rolling(self.adaptive_atr_period).mean().ffill().fillna(true_range.expanding().mean())
 
             # Start ATR is the ATR at the beginning of the backtest
             start_atr = atr.iloc[0]
@@ -47,11 +48,19 @@ class GridTradingStrategy:
             lower_bound = start_price * (1 - self.grid_range_pct/2)
             upper_bound = start_price * (1 + self.grid_range_pct/2)
 
+        # Adjust num_grids based on min_spacing_pct
+        current_num_grids = self.num_grids
+        while current_num_grids > 2:
+            spacing = (upper_bound - lower_bound) / (current_num_grids - 1)
+            if spacing / start_price >= self.min_spacing_pct:
+                break
+            current_num_grids -= 1
+
         # Create grid levels
         if self.grid_type == "geometric":
-            grid_levels = np.geomspace(lower_bound, upper_bound, self.num_grids)
+            grid_levels = np.geomspace(lower_bound, upper_bound, current_num_grids)
         else:
-            grid_levels = np.linspace(lower_bound, upper_bound, self.num_grids)
+            grid_levels = np.linspace(lower_bound, upper_bound, current_num_grids)
 
         # Assume we allocate 50% capital to quote asset (cash), 50% to base asset (inventory)
         cash = self.initial_capital / 2.0
@@ -138,6 +147,7 @@ class GridTradingStrategy:
                         fee = trade_value * self.fee_pct
                         cash += (trade_value - fee)
                         inventory -= amount_to_sell
+                        inventory = max(inventory, 0)
                         grid_status[level] = 0
                         trades.append({'time': dates[i], 'type': 'sell', 'price': exec_price, 'amount': amount_to_sell})
 
@@ -164,12 +174,18 @@ class GridTradingStrategy:
                     # Buy missing
                     amount_to_buy = target_inventory - inventory
                     exec_price = c * (1 + self.slippage_pct)
-                    trade_value = amount_to_buy * exec_price
-                    fee = trade_value * self.fee_pct
-                    if cash >= (trade_value + fee):
-                        cash -= (trade_value + fee)
-                        inventory += amount_to_buy
-                        trades.append({'time': dates[i], 'type': 'buy', 'price': exec_price, 'amount': amount_to_buy, 'note': 'rebalance'})
+                    fee_estimate = amount_to_buy * exec_price * self.fee_pct
+
+                    # Ensure we do not skip due to insufficient cash; buy as much as possible
+                    amount_to_buy = min(amount_to_buy, max(0, cash - fee_estimate) / exec_price)
+
+                    if amount_to_buy > 0:
+                        trade_value = amount_to_buy * exec_price
+                        fee = trade_value * self.fee_pct
+                        if cash >= (trade_value + fee):
+                            cash -= (trade_value + fee)
+                            inventory += amount_to_buy
+                            trades.append({'time': dates[i], 'type': 'buy', 'price': exec_price, 'amount': amount_to_buy, 'note': 'rebalance'})
 
                 # Recalculate grid
                 if self.adaptive_atr_period and self.adaptive_atr_period > 0:
@@ -182,10 +198,18 @@ class GridTradingStrategy:
                     lower_bound = c * (1 - self.grid_range_pct/2)
                     upper_bound = c * (1 + self.grid_range_pct/2)
 
+                # Adjust num_grids based on min_spacing_pct
+                current_num_grids = self.num_grids
+                while current_num_grids > 2:
+                    spacing = (upper_bound - lower_bound) / (current_num_grids - 1)
+                    if spacing / c >= self.min_spacing_pct:
+                        break
+                    current_num_grids -= 1
+
                 if self.grid_type == "geometric":
-                    grid_levels = np.geomspace(lower_bound, upper_bound, self.num_grids)
+                    grid_levels = np.geomspace(lower_bound, upper_bound, current_num_grids)
                 else:
-                    grid_levels = np.linspace(lower_bound, upper_bound, self.num_grids)
+                    grid_levels = np.linspace(lower_bound, upper_bound, current_num_grids)
 
                 buy_grids = len([g for g in grid_levels if g < c])
                 sell_grids = len([g for g in grid_levels if g >= c])
