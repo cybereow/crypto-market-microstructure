@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--adaptive-atr", type=int, default=14, help="If set, uses ATR over this period to dynamically calculate grid range")
     parser.add_argument("--atr-multiplier", type=float, default=2.0, help="Multiplier for ATR when using adaptive grid")
     parser.add_argument("--cooldown", type=int, default=20, help="Cooldown period in bars before grid can recenter again")
-    parser.add_argument("--adx-threshold", type=float, default=35.0, help="ADX threshold to stop grid trading in trends")
+    parser.add_argument("--adx-threshold", type=float, default=15.0, help="ADX threshold to stop grid trading in trends")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -63,21 +63,22 @@ def main():
         atr_multiplier=args.atr_multiplier,
         recenter_cooldown=args.cooldown
     )
-    results = strategy.backtest(df)
+
+    # Regime gate: the grid must not trade in strongly trending bars at all
+    # (not just have those bars' P&L hidden after the fact), so ADX is
+    # shifted by 1 (decide using only information available before the bar)
+    # and passed into the simulation itself.
+    adx_shifted = adx.shift(1).fillna(0)
+    regime_mask = adx_shifted < args.adx_threshold
+
+    results = strategy.backtest(df, regime_mask=regime_mask)
 
     if not results:
         print("Backtest returned no results.")
         return
 
     df_result = results['equity_curve']
-
-    # Post-filter: do not take returns during strongly trending regimes
-    adx_shifted = adx.shift(1).fillna(0)
-    df_result.loc[adx_shifted >= args.adx_threshold, 'return'] = 0.0
-
-    # Recalculate equity curve and metrics after ADX filter
     initial_capital = args.initial_capital if hasattr(args, 'initial_capital') else 10000
-    df_result['equity'] = initial_capital * (1 + df_result['return']).cumprod()
 
     daily_rf = 0.0
     # Dynamically detect periods per year based on time frequency
@@ -93,11 +94,15 @@ def main():
     drawdown = df_result['equity'] / roll_max - 1.0
     max_dd = drawdown.min()
 
+    trade_stats = results['trade_stats']
+
     print("-" * 40)
     print("Grid Trading Results (with 0.1% fees):")
     print(f"Total Return: {results['total_return']:.2%}")
     print(f"Buy & Hold Return: {results['buy_hold_return']:.2%}")
     print(f"Number of Trades: {results['num_trades']}")
+    print(f"Win Rate (per closed round-trip): {trade_stats['win_rate']:.2%}")
+    print(f"Closed Round-Trips: {trade_stats['num_trades']}")
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Max Drawdown: {max_dd:.2%}")
     print("-" * 40)

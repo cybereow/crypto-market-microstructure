@@ -5,6 +5,7 @@ import numpy as np
 from src.strategies.grid_trading import GridTradingStrategy
 from src.strategies.pairs_trading import PairsTradingStrategy
 from src.strategies.ml_strategy import MLTradingStrategy
+from src.metrics import trade_level_stats
 
 @pytest.fixture
 def dummy_price_data():
@@ -116,3 +117,41 @@ def test_ml_strategy_execution():
     # Prediction 1 is 1. Shifted by 1, index 2 is 1.
     assert returns['position'].iloc[2] == 1.0
     assert returns['strat_ret'].iloc[2] == returns['ret_1d'].iloc[2]
+
+
+def test_grid_round_trip_captures_spacing():
+    """A dynamically-triggered buy must take profit at the NEXT grid line up,
+    not round-trip back to the same price it was bought at — otherwise every
+    such trade nets to ~0 minus fees/slippage, which is what capped the
+    strategy's real-world win rate at a coin flip before this was fixed.
+    """
+    dates = pd.date_range("2023-01-01", periods=5)
+    # Start at 100 (grid: 80, 90, 100, 110, 120). Drop to 80 (buys at 90 and
+    # 80), then rally to 120 (should sell the level-80 lot at 90, and the
+    # level-90 lot at 100 — one grid step up from where each was bought).
+    data = {
+        'close': [100.0, 80.0, 120.0, 100.0, 100.0],
+        'high':  [100.0, 100.0, 120.0, 120.0, 100.0],
+        'low':   [100.0, 80.0, 80.0, 100.0, 100.0],
+    }
+    df = pd.DataFrame(data, index=dates)
+    strategy = GridTradingStrategy(num_grids=5, grid_range_pct=0.4, initial_capital=1000, fee_pct=0.0, slippage_pct=0.0)
+    results = strategy.backtest(df)
+
+    stats = results['trade_stats']
+    assert stats['num_trades'] > 0
+    # Every closed dynamic round-trip here sells at least one grid step above
+    # its buy price, so none of them should be a loser (zero fees/slippage).
+    assert stats['win_rate'] == 1.0
+
+
+def test_trade_level_stats_groups_contiguous_positions():
+    position = pd.Series([0, 1, 1, 1, 0, -1, -1, 0, 1, 0])
+    strat_ret = pd.Series([0, 0.01, -0.005, 0.02, 0, 0.01, 0.03, 0, -0.02, 0])
+
+    stats = trade_level_stats(position, strat_ret)
+
+    # Three discrete trades: long (0.01-0.005+0.02=0.025, win), short
+    # (0.01+0.03=0.04, win), long (-0.02, loss).
+    assert stats['num_trades'] == 3
+    assert stats['win_rate'] == pytest.approx(2 / 3)

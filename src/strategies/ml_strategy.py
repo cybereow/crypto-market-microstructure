@@ -1,16 +1,22 @@
 import pandas as pd
 import numpy as np
+from scipy.stats import norm
 
 
 class MLTradingStrategy:
     def __init__(self, model, fee_pct=0.001, slippage_pct=0.001,
-                 max_position=1.0, stop_loss_pct=0.03, max_daily_dd=0.05):
+                 max_position=1.0, stop_loss_pct=0.03, max_daily_dd=0.05,
+                 zscore_window=500):
         self.model = model
         self.fee_pct = fee_pct
         self.slippage_pct = slippage_pct
         self.max_position = max_position
         self.stop_loss_pct = stop_loss_pct
         self.max_daily_dd = max_daily_dd
+        # Trailing window (in bars) used to standardize predicted
+        # probabilities before thresholding — see note in the 2-class
+        # branch of generate_signals for why this is necessary.
+        self.zscore_window = zscore_window
 
     def generate_signals(self, X: pd.DataFrame, confidence_threshold=0.55, close_series=None) -> pd.DataFrame:
         """
@@ -48,23 +54,38 @@ class MLTradingStrategy:
                             position.iloc[i] = 0
                             size.iloc[i] = 0.0
             else:
-                # 2-class fallback
-                prob_up = probs[:, 1]
+                # 2-class fallback.
+                #
+                # A regularized XGBoost trained on noisy 4h crypto returns
+                # produces well-*ranked* but tightly compressed probabilities
+                # (e.g. spanning ~0.47-0.53 instead of the full 0-1 range) —
+                # that compression is a symptom of a real, weak edge, not a
+                # bug, and forcing the model to spread out (less
+                # regularization) would just mean overfitting noise instead.
+                # A fixed threshold like 0.55 on raw probability is then
+                # either always-on or (as here) never reached, so we instead
+                # standardize prob_up against its own trailing distribution
+                # and threshold the resulting z-score. confidence_threshold
+                # keeps its 0.5-1.0 "probability-like" meaning via the
+                # inverse-normal-CDF map to a z cutoff.
+                min_size = 0.20
+                prob_up = pd.Series(probs[:, 1], index=X.index)
+                min_periods = max(30, self.zscore_window // 5)
+                roll_mean = prob_up.rolling(self.zscore_window, min_periods=min_periods).mean()
+                roll_std = prob_up.rolling(self.zscore_window, min_periods=min_periods).std()
+                z = (prob_up - roll_mean) / roll_std.replace(0, np.nan)
+                z_threshold = norm.ppf(np.clip(confidence_threshold, 0.5001, 0.9999))
+
                 for i in range(len(X)):
-                    if prob_up[i] >= confidence_threshold:
+                    zi = z.iloc[i]
+                    if pd.isna(zi):
+                        continue
+                    if zi >= z_threshold:
                         position.iloc[i] = 1
-                        edge = prob_up[i] - (1 - prob_up[i])
-                        size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
-                        if size.iloc[i] < 0.10:
-                            position.iloc[i] = 0
-                            size.iloc[i] = 0.0
-                    elif prob_up[i] <= (1 - confidence_threshold):
+                        size.iloc[i] = min(max(np.clip(zi / (2 * z_threshold), 0.0, 1.0), min_size), self.max_position)
+                    elif zi <= -z_threshold:
                         position.iloc[i] = -1
-                        edge = (1 - prob_up[i]) - prob_up[i]
-                        size.iloc[i] = min(np.clip(edge / 2, 0.0, 1.0), self.max_position)
-                        if size.iloc[i] < 0.10:
-                            position.iloc[i] = 0
-                            size.iloc[i] = 0.0
+                        size.iloc[i] = min(max(np.clip(-zi / (2 * z_threshold), 0.0, 1.0), min_size), self.max_position)
 
                         # Trend Filter for Shorts
                         if close_series is not None and close_series.iloc[i] >= sma_50.iloc[i]:

@@ -9,6 +9,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from src.strategies.pairs_trading import PairsTradingStrategy
+from src.metrics import trade_level_stats
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest Statistical Arbitrage (Pairs Trading) Strategy.")
@@ -75,7 +76,8 @@ def main():
     results_df['cum_ret'] = (1 + results_df['strat_ret']).cumprod()
 
     total_return = results_df['cum_ret'].iloc[-1] - 1
-    win_rate = (results_df['strat_ret'] > 0).sum() / (results_df['strat_ret'] != 0).sum() if (results_df['strat_ret'] != 0).sum() > 0 else 0
+    trade_stats = trade_level_stats(results_df['position_s1'], results_df['strat_ret'])
+    win_rate = trade_stats['win_rate']
 
     daily_rf = 0.0
     diffs = results_df.index.to_series().diff().dropna()
@@ -92,7 +94,8 @@ def main():
 
     print("-" * 40)
     print(f"Out-of-Sample Strategy Return (with 0.1% fees): {total_return:.2%}")
-    print(f"Win Rate on Active Days: {win_rate:.2%}")
+    print(f"Win Rate (per closed trade): {win_rate:.2%}")
+    print(f"Total Trades: {trade_stats['num_trades']}")
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Max Drawdown: {max_dd:.2%}")
     print("-" * 40)

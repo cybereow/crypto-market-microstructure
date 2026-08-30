@@ -22,6 +22,7 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 1000
         since_ms = exchange.parse8601(since + 'T00:00:00Z')
 
     all_ohlcv = []
+    now_ms = exchange.milliseconds()
 
     # Pagination loop
     while len(all_ohlcv) < limit:
@@ -39,6 +40,15 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 1000
             print("No more data available from exchange.")
             break
 
+        # Drop candles we've already collected (some exchanges return an
+        # overlapping candle at the start of each page).
+        if all_ohlcv:
+            last_seen_ts = all_ohlcv[-1][0]
+            ohlcv = [c for c in ohlcv if c[0] > last_seen_ts]
+            if not ohlcv:
+                print("No new candles returned; reached the end of available history.")
+                break
+
         all_ohlcv.extend(ohlcv)
 
         # Determine the next `since` timestamp
@@ -46,8 +56,12 @@ def fetch_ohlcv(exchange_id: str, symbol: str, timeframe: str, limit: int = 1000
         last_candle_ts = ohlcv[-1][0]
         since_ms = last_candle_ts + 1
 
-        # If we got less than requested limit, we've likely hit the end of available history
-        if len(ohlcv) < fetch_limit:
+        # Stop once we've caught up to the present. A short page (fewer than
+        # requested) does NOT by itself mean history has ended — some
+        # exchanges (e.g. kucoin) return one fewer candle than requested near
+        # page boundaries even mid-history — so only treat it as the end when
+        # we're also within one bar of "now".
+        if since_ms >= now_ms:
             print("Reached the end of available history.")
             break
 

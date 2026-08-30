@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.strategies.ml_strategy import MLTradingStrategy
+from src.metrics import trade_level_stats
 
 
 def main():
@@ -56,8 +57,8 @@ def main():
     total_return = oos_results['cum_ret'].iloc[-1] - 1
     buy_hold_return = (1 + oos_results['ret_1d']).cumprod().iloc[-1] - 1
 
-    active = oos_results['strat_ret'] != 0
-    win_rate = (oos_results.loc[active, 'strat_ret'] > 0).mean() if active.sum() > 0 else 0
+    trade_stats = trade_level_stats(oos_results['position'], oos_results['strat_ret'])
+    win_rate = trade_stats['win_rate']
 
     daily_rf = 0.0
     diffs = oos_results.index.to_series().diff().dropna()
@@ -89,8 +90,7 @@ def main():
     flat_bars = (oos_results['position'] == 0).sum()
     total_bars = len(oos_results)
 
-    # Trade count (position changes)
-    trades = (oos_results['position'].diff().fillna(0) != 0).sum()
+    trades = trade_stats['num_trades']
 
     print("=" * 50)
     print("  ML Strategy — Out-of-Sample Results")
@@ -103,7 +103,7 @@ def main():
     print(f"  Calmar Ratio:       {calmar:>10.2f}")
     print(f"  Max Drawdown:       {max_dd:>10.2%}")
     print(f"  Profit Factor:      {profit_factor:>10.2f}")
-    print(f"  Win Rate:           {win_rate:>10.2%}")
+    print(f"  Win Rate:           {win_rate:>10.2%}  (per closed trade)")
     print("-" * 50)
     print(f"  Total Trades:       {trades:>10d}")
     print(f"  Long Bars:          {long_bars:>10d} ({long_bars/total_bars:.0%})")
