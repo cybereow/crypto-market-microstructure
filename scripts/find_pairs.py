@@ -11,10 +11,17 @@ from statsmodels.tsa.stattools import coint
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 
-def find_cointegrated_pairs(prices_df: pd.DataFrame, p_value_threshold=0.05):
+def calculate_hurst_exponent(ts):
+    """Calculates the Hurst Exponent of a time series."""
+    lags = range(2, 100)
+    tau = [np.std(np.subtract(ts[lag:], ts[:-lag])) for lag in lags]
+    poly = np.polyfit(np.log(lags), np.log(tau), 1)
+    return poly[0] * 2.0
+
+def find_cointegrated_pairs(prices_df: pd.DataFrame, p_value_threshold=0.10):
     """
     Finds cointegrated pairs from a DataFrame of prices.
-    Returns a list of tuples: (asset1, asset2, p_value)
+    Returns a list of tuples: (asset1, asset2, p_value, hurst)
     """
     n = prices_df.shape[1]
     keys = prices_df.keys()
@@ -32,20 +39,30 @@ def find_cointegrated_pairs(prices_df: pd.DataFrame, p_value_threshold=0.05):
 
             score, pvalue, _ = coint(common.iloc[:, 0], common.iloc[:, 1])
             if pvalue < p_value_threshold:
-                pairs.append((keys[i], keys[j], pvalue))
+                # If cointegrated, check the Hurst exponent of the spread
+                spread = common.iloc[:, 0] - (common.iloc[:, 1] * (common.iloc[:, 0].mean() / common.iloc[:, 1].mean()))
+                hurst = calculate_hurst_exponent(spread.values)
+
+                if hurst < 0.5:
+                    pairs.append((keys[i], keys[j], pvalue, hurst))
 
     return pairs
 
 def main():
     parser = argparse.ArgumentParser(description="Find cointegrated pairs among downloaded CSV data.")
     parser.add_argument("--directory", type=str, default=OUTPUT_DIR, help="Directory containing price CSV files")
-    parser.add_argument("--p-value", type=float, default=0.05, help="P-value threshold for cointegration")
+    parser.add_argument("--p-value", type=float, default=0.10, help="P-value threshold for cointegration")
+    parser.add_argument("--timeframe", type=str, default=None, help="Filter CSV files by timeframe (e.g. 4h, 1d)")
     args = parser.parse_args()
 
-    # Load all CSVs in the directory
-    csv_files = glob.glob(os.path.join(args.directory, "*.csv"))
+    # Load all CSVs in the directory, filtered by timeframe if provided
+    if args.timeframe:
+        csv_files = glob.glob(os.path.join(args.directory, f"*_{args.timeframe}.csv"))
+    else:
+        csv_files = glob.glob(os.path.join(args.directory, "*.csv"))
+
     if not csv_files:
-        print(f"No CSV files found in {args.directory}")
+        print(f"No CSV files found in {args.directory} matching timeframe {args.timeframe}")
         sys.exit(1)
 
     prices = {}
@@ -85,7 +102,7 @@ def main():
         # Sort by p-value
         pairs.sort(key=lambda x: x[2])
         for p in pairs:
-            print(f"  {p[0]} and {p[1]} - p-value: {p[2]:.4f}")
+            print(f"  {p[0]} and {p[1]} - p-value: {p[2]:.4f}, Hurst: {p[3]:.4f}")
     else:
         print("No cointegrated pairs found.")
 

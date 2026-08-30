@@ -10,10 +10,12 @@ from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.strategies.ml_strategy import MLTradingStrategy
 from src.strategies.grid_trading import GridTradingStrategy
+from src.strategies.pairs_trading import PairsTradingStrategy
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest Regime-Aware Ensemble Strategy (ML + Grid).")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
+    parser.add_argument("--asset2", type=str, default=None, help="Filename of second asset CSV for Pairs Trading blending")
     parser.add_argument("--model", type=str, default="ml_model.json", help="Filename of the trained ML model")
     parser.add_argument("--adx-threshold", type=float, default=25.0, help="ADX threshold to determine trend vs range regime")
     args = parser.parse_args()
@@ -62,8 +64,14 @@ def main():
     print("Creating advanced features for ML strategy...")
     df_features = create_features(df)
 
-    exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
-    features = [col for col in df_features.columns if col not in exclude_cols]
+    features_path = os.path.join(OUTPUT_DIR, "ml_features.txt")
+    if os.path.exists(features_path):
+        with open(features_path, 'r') as f:
+            features = [feat.strip() for feat in f.read().split(',') if feat.strip()]
+        print(f"Loaded {len(features)} selected features from ml_features.txt")
+    else:
+        exclude_cols = ['open', 'high', 'low', 'close', 'volume', 'target', 'ret_1d']
+        features = [col for col in df_features.columns if col not in exclude_cols]
 
     X = df_features[features]
 
@@ -76,11 +84,11 @@ def main():
         sys.exit(1)
 
     ml_strategy = MLTradingStrategy(model)
-    ml_signals = ml_strategy.generate_signals(X)
+    ml_signals = ml_strategy.generate_signals(X, close_series=df['close'])
 
     # 3. Simulate Grid Strategy Equity Curve
     print("Running Grid Backtest for regime mapping...")
-    grid_strategy = GridTradingStrategy(num_grids=10, grid_range_pct=0.2, adaptive_atr_period=14, initial_capital=10000)
+    grid_strategy = GridTradingStrategy(num_grids=5, grid_range_pct=0.2, adaptive_atr_period=14, initial_capital=10000)
     # We only care about returns for blending
     grid_results = grid_strategy.backtest(df)
 
@@ -88,6 +96,26 @@ def main():
     common_idx = df.index.intersection(X.index).intersection(grid_results['equity_curve'].index)
     df_combined = df.loc[common_idx].copy()
     regime_aligned = regime.loc[common_idx]
+
+    # 4. Optional Pairs Strategy Blending
+    pairs_strat_returns = pd.Series(0.0, index=common_idx)
+    if args.asset2:
+        path2 = os.path.join(OUTPUT_DIR, args.asset2)
+        if os.path.exists(path2):
+            print(f"Running Pairs Backtest against {args.asset2} for blending...")
+            df2 = pd.read_csv(path2, index_col='timestamp', parse_dates=True)
+            aligned_df = pd.concat([df['close'], df2['close']], axis=1).dropna()
+            aligned_df.columns = ['S1', 'S2']
+
+            pairs_strategy = PairsTradingStrategy()
+            signals_df_full = pairs_strategy.generate_signals(aligned_df['S1'], aligned_df['S2'])
+
+            # Since ML usually trains on 80%, we only use the OOS portion for the pair returns to match ensemble behavior,
+            # but for simplicity of aligning, we compute returns for the full period and align via `common_idx`
+            pairs_results = pairs_strategy.calculate_returns(signals_df_full)
+            pairs_strat_returns = pairs_results['strat_ret'].reindex(common_idx).fillna(0)
+        else:
+            print(f"Warning: Pairs asset {args.asset2} not found, skipping pairs blending.")
 
     # Align Returns
     if 'ret_1d' not in df_combined.columns:
@@ -99,13 +127,29 @@ def main():
     grid_strat_returns = grid_results['equity_curve'].loc[common_idx]['return'].fillna(0)
 
     # Ensemble Allocation:
-    # If Regime == 1 (Trend) -> Allocation = 100% ML
-    # If Regime == 0 (Range) -> Allocation = 100% Grid
+    # Weighted blending based on ADX
 
-    # Ensure signal doesn't look ahead: shift regime by 1 day
-    regime_signal = regime_aligned.shift(1).fillna(0)
+    # Ensure signals don't look ahead: shift adx by 1 period
+    adx_shifted = adx.loc[common_idx].shift(1).fillna(0)
 
-    ensemble_returns = np.where(regime_signal == 1, ml_strat_returns, grid_strat_returns)
+    ml_weight = np.clip((adx_shifted - 20) / 20, 0, 1)
+    grid_weight = 1 - ml_weight
+
+    directional_returns = ml_weight * ml_strat_returns + grid_weight * grid_strat_returns
+
+    # If pairs are used, allocate 30% to Pairs and 70% to Directional (ML/Grid)
+    if args.asset2:
+        ensemble_returns = 0.3 * pairs_strat_returns + 0.7 * directional_returns
+    else:
+        ensemble_returns = directional_returns
+
+    # Volatility Regime Scaling
+    if 'vol_regime' in df_combined.columns:
+        vol_regime_shifted = df_combined['vol_regime'].shift(1).fillna(1.0)
+        # Scale returns by 0.5 when short-term vol is 2x long-term vol
+        vol_scaler = np.where(vol_regime_shifted > 2.0, 0.5, 1.0)
+        ensemble_returns = ensemble_returns * vol_scaler
+
     df_combined['ensemble_ret'] = ensemble_returns
     df_combined['cum_ret'] = (1 + df_combined['ensemble_ret']).cumprod()
 
@@ -113,7 +157,14 @@ def main():
     buy_hold_return = (df_combined['close'].iloc[-1] / df_combined['close'].iloc[0]) - 1
 
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (df_combined['ensemble_ret'].mean() - daily_rf) / (df_combined['ensemble_ret'].std() + 1e-9)
+    diffs = df_combined.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (df_combined['ensemble_ret'].mean() - daily_rf) / (df_combined['ensemble_ret'].std() + 1e-9)
     roll_max = df_combined['cum_ret'].cummax()
     drawdown = df_combined['cum_ret'] / roll_max - 1.0
     max_dd = drawdown.min()

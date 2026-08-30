@@ -11,12 +11,13 @@ from src.strategies.grid_trading import GridTradingStrategy
 def main():
     parser = argparse.ArgumentParser(description="Backtest Grid Trading Strategy.")
     parser.add_argument("--data", type=str, required=True, help="Filename of the asset CSV (e.g. kraken_BTC_USDT_1d.csv)")
-    parser.add_argument("--grids", type=int, default=10, help="Number of grid levels")
+    parser.add_argument("--grids", type=int, default=5, help="Number of grid levels")
     parser.add_argument("--range-pct", type=float, default=0.2, help="Grid range as a percentage of start price (e.g., 0.2 for +/- 10%)")
     parser.add_argument("--grid-type", type=str, default="arithmetic", choices=["arithmetic", "geometric"], help="Type of grid spacing")
-    parser.add_argument("--adaptive-atr", type=int, default=None, help="If set, uses ATR over this period to dynamically calculate grid range")
+    parser.add_argument("--adaptive-atr", type=int, default=14, help="If set, uses ATR over this period to dynamically calculate grid range")
     parser.add_argument("--atr-multiplier", type=float, default=2.0, help="Multiplier for ATR when using adaptive grid")
-    parser.add_argument("--cooldown", type=int, default=0, help="Cooldown period in bars before grid can recenter again")
+    parser.add_argument("--cooldown", type=int, default=20, help="Cooldown period in bars before grid can recenter again")
+    parser.add_argument("--adx-threshold", type=float, default=15.0, help="ADX threshold to stop grid trading in trends")
     args = parser.parse_args()
 
     data_path = os.path.join(OUTPUT_DIR, args.data)
@@ -26,6 +27,28 @@ def main():
 
     print(f"Loading data from {args.data}...")
     df = pd.read_csv(data_path, index_col='timestamp', parse_dates=True)
+
+    # Compute ADX for regime filter
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/14, adjust=False).mean()
+
+    up_move = df['high'] - df['high'].shift(1)
+    down_move = df['low'].shift(1) - df['low']
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    plus_dm = pd.Series(plus_dm, index=df.index).ewm(alpha=1/14, adjust=False).mean()
+    minus_dm = pd.Series(minus_dm, index=df.index).ewm(alpha=1/14, adjust=False).mean()
+
+    plus_di = 100 * (plus_dm / atr)
+    minus_di = 100 * (minus_dm / atr)
+
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
+    adx = dx.ewm(alpha=1/14, adjust=False).mean()
 
     if args.adaptive_atr:
         print(f"Running Grid Trading Backtest (Grids: {args.grids}, Adaptive ATR({args.adaptive_atr}) x {args.atr_multiplier}, Type: {args.grid_type})...")
@@ -40,24 +63,46 @@ def main():
         atr_multiplier=args.atr_multiplier,
         recenter_cooldown=args.cooldown
     )
-    results = strategy.backtest(df)
+
+    # Regime gate: the grid must not trade in strongly trending bars at all
+    # (not just have those bars' P&L hidden after the fact), so ADX is
+    # shifted by 1 (decide using only information available before the bar)
+    # and passed into the simulation itself.
+    adx_shifted = adx.shift(1).fillna(0)
+    regime_mask = adx_shifted < args.adx_threshold
+
+    results = strategy.backtest(df, regime_mask=regime_mask)
 
     if not results:
         print("Backtest returned no results.")
         return
 
     df_result = results['equity_curve']
+    initial_capital = args.initial_capital if hasattr(args, 'initial_capital') else 10000
+
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (df_result['return'].mean() - daily_rf) / (df_result['return'].std() + 1e-9)
+    # Dynamically detect periods per year based on time frequency
+    diffs = df_result.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (df_result['return'].mean() - daily_rf) / (df_result['return'].std() + 1e-9)
     roll_max = df_result['equity'].cummax()
     drawdown = df_result['equity'] / roll_max - 1.0
     max_dd = drawdown.min()
+
+    trade_stats = results['trade_stats']
 
     print("-" * 40)
     print("Grid Trading Results (with 0.1% fees):")
     print(f"Total Return: {results['total_return']:.2%}")
     print(f"Buy & Hold Return: {results['buy_hold_return']:.2%}")
     print(f"Number of Trades: {results['num_trades']}")
+    print(f"Win Rate (per closed round-trip): {trade_stats['win_rate']:.2%}")
+    print(f"Closed Round-Trips: {trade_stats['num_trades']}")
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Max Drawdown: {max_dd:.2%}")
     print("-" * 40)

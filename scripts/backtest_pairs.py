@@ -9,6 +9,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from src.strategies.pairs_trading import PairsTradingStrategy
+from src.metrics import trade_level_stats
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest Statistical Arbitrage (Pairs Trading) Strategy.")
@@ -17,6 +18,8 @@ def main():
     parser.add_argument("--z-entry", type=float, default=2.0, help="Z-Score entry threshold")
     parser.add_argument("--z-exit", type=float, default=0.5, help="Z-Score exit threshold")
     parser.add_argument("--window", type=int, default=30, help="Rolling window for Z-Score calculation")
+    parser.add_argument("--delta", type=float, default=1e-5, help="Kalman filter process noise (delta)")
+    parser.add_argument("--vt", type=float, default=1e-3, help="Kalman filter measurement noise (vt)")
     args = parser.parse_args()
 
     path1 = os.path.join(OUTPUT_DIR, args.asset1)
@@ -37,9 +40,15 @@ def main():
     s2_full = aligned_df['S2']
 
     print(f"Backtesting Pairs Strategy on Out-of-Sample data for {args.asset1} and {args.asset2}")
-    print(f"Params: Z-Entry={args.z_entry}, Z-Exit={args.z_exit}, Window={args.window}")
+    print(f"Params: Z-Entry={args.z_entry}, Z-Exit={args.z_exit}, Window={args.window}, Delta={args.delta}, Vt={args.vt}")
 
-    strategy = PairsTradingStrategy(z_entry_threshold=args.z_entry, z_exit_threshold=args.z_exit, window=args.window)
+    strategy = PairsTradingStrategy(
+        z_entry_threshold=args.z_entry,
+        z_exit_threshold=args.z_exit,
+        window=args.window,
+        delta=args.delta,
+        vt=args.vt
+    )
 
     # Generate signals on FULL data so rolling Beta warm-up is completely accurate.
     signals_df_full = strategy.generate_signals(s1_full, s2_full)
@@ -67,17 +76,26 @@ def main():
     results_df['cum_ret'] = (1 + results_df['strat_ret']).cumprod()
 
     total_return = results_df['cum_ret'].iloc[-1] - 1
-    win_rate = (results_df['strat_ret'] > 0).sum() / (results_df['strat_ret'] != 0).sum() if (results_df['strat_ret'] != 0).sum() > 0 else 0
+    trade_stats = trade_level_stats(results_df['position_s1'], results_df['strat_ret'])
+    win_rate = trade_stats['win_rate']
 
     daily_rf = 0.0
-    sharpe = np.sqrt(365) * (results_df['strat_ret'].mean() - daily_rf) / (results_df['strat_ret'].std() + 1e-9)
+    diffs = results_df.index.to_series().diff().dropna()
+    if len(diffs) > 0:
+        median_diff = diffs.median()
+        periods_per_year = int(pd.Timedelta(days=365) / median_diff)
+    else:
+        periods_per_year = 365
+
+    sharpe = np.sqrt(periods_per_year) * (results_df['strat_ret'].mean() - daily_rf) / (results_df['strat_ret'].std() + 1e-9)
     roll_max = results_df['cum_ret'].cummax()
     drawdown = results_df['cum_ret'] / roll_max - 1.0
     max_dd = drawdown.min()
 
     print("-" * 40)
     print(f"Out-of-Sample Strategy Return (with 0.1% fees): {total_return:.2%}")
-    print(f"Win Rate on Active Days: {win_rate:.2%}")
+    print(f"Win Rate (per closed trade): {win_rate:.2%}")
+    print(f"Total Trades: {trade_stats['num_trades']}")
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Max Drawdown: {max_dd:.2%}")
     print("-" * 40)
