@@ -19,10 +19,12 @@ def test_process_bookticker_chunk_computes_mid_and_renames_header():
 
     out = process_bookticker_chunk(raw)
 
-    assert list(out.columns) == ['timestamp', 'bid_qty', 'ask_qty', 'mid']
+    assert list(out.columns) == ['timestamp', 'bid_qty', 'ask_qty', 'bid_price', 'ask_price', 'mid']
     assert out['mid'].tolist() == [101.0, 102.0]
     assert out['bid_qty'].tolist() == [5.0, 4.0]
     assert out['ask_qty'].tolist() == [3.0, 2.0]
+    assert out['bid_price'].tolist() == [100.0, 101.0]
+    assert out['ask_price'].tolist() == [102.0, 103.0]
 
 
 def test_resample_chunk_sums_qty_and_builds_ohlc_from_mid():
@@ -48,6 +50,10 @@ def test_resample_chunk_sums_qty_and_builds_ohlc_from_mid():
     assert row['mid_max'] == 104.0
     assert row['mid_min'] == 99.0
     assert row['mid_last'] == 102.0
+    # Real last-observed quotes, NOT derived from mid -- the tick at t=07 had
+    # bid=101, ask=103 (mid=102), so the bar's closing quotes come from there.
+    assert row['bid_price_last'] == 101.0
+    assert row['ask_price_last'] == 103.0
 
 
 def test_cross_chunk_combine_reproduces_true_ohlc_when_bucket_splits_chunks():
@@ -80,6 +86,7 @@ def test_cross_chunk_combine_reproduces_true_ohlc_when_bucket_splits_chunks():
     recombined = combined.groupby(combined.index).agg({
         'bid_qty_sum': 'sum', 'ask_qty_sum': 'sum',
         'mid_first': 'first', 'mid_max': 'max', 'mid_min': 'min', 'mid_last': 'last',
+        'bid_price_last': 'last', 'ask_price_last': 'last',
     })
 
     pd.testing.assert_frame_equal(recombined, single_pass, check_freq=False)

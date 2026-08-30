@@ -33,28 +33,34 @@ def process_bookticker_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
     ask_price = chunk['best_ask_price'].astype(float)
     chunk['bid_qty'] = chunk['best_bid_qty'].astype(float)
     chunk['ask_qty'] = chunk['best_ask_qty'].astype(float)
+    chunk['bid_price'] = bid_price
+    chunk['ask_price'] = ask_price
     chunk['mid'] = (bid_price + ask_price) / 2.0
 
     time_col = 'transaction_time' if 'transaction_time' in chunk.columns else chunk.columns[5]
     chunk['timestamp'] = pd.to_datetime(chunk[time_col], unit='ms')
 
-    return chunk[['timestamp', 'bid_qty', 'ask_qty', 'mid']]
+    return chunk[['timestamp', 'bid_qty', 'ask_qty', 'bid_price', 'ask_price', 'mid']]
 
 
 def _resample_chunk(processed: pd.DataFrame, rule: str) -> pd.DataFrame:
     """One chunk's worth of ticks -> one bucket per bar, quantities summed
-    (OBI's mean-of-means fix) and the mid price turned into an OHLC-style
-    bar (first/max/min/last). Both kinds of aggregate are associative
-    across chunks/days when chunks are processed in chronological order
-    (guaranteed by pd.read_csv(chunksize=...) reading the archive
-    sequentially): re-summing per-chunk sums reproduces the true sum,
-    and taking first-of-firsts / max-of-maxes / min-of-mins / last-of-lasts
-    over chronologically ordered chunks reproduces the true first/high/
-    low/last -- so the same combine step in `main()` works for both.
+    (OBI's mean-of-means fix), the mid price turned into an OHLC-style bar
+    (first/max/min/last), and the last observed real bid/ask quote per bar
+    kept as-is (not derived from mid) -- a market-making backtest needs the
+    ACTUAL spread, which averaging away into a single mid price would lose.
+    Both kinds of aggregate are associative across chunks/days when chunks
+    are processed in chronological order (guaranteed by
+    pd.read_csv(chunksize=...) reading the archive sequentially):
+    re-summing per-chunk sums reproduces the true sum, and taking
+    first-of-firsts / max-of-maxes / min-of-mins / last-of-lasts over
+    chronologically ordered chunks reproduces the true first/high/low/last
+    -- so the same combine step in `main()` works for both.
     """
     agg = processed.resample(rule).agg({
         'bid_qty': ['sum'], 'ask_qty': ['sum'],
         'mid': ['first', 'max', 'min', 'last'],
+        'bid_price': ['last'], 'ask_price': ['last'],
     })
     agg.columns = ['_'.join(c) for c in agg.columns]
     return agg
@@ -111,12 +117,14 @@ def download_and_process_l2(symbol: str, date: str, timeframe: str = '1d') -> pd
     final = combined.groupby(combined.index).agg({
         'bid_qty_sum': 'sum', 'ask_qty_sum': 'sum',
         'mid_first': 'first', 'mid_max': 'max', 'mid_min': 'min', 'mid_last': 'last',
+        'bid_price_last': 'last', 'ask_price_last': 'last',
     })
     final = final.rename(columns={
         'bid_qty_sum': 'bid_qty', 'ask_qty_sum': 'ask_qty',
         'mid_first': 'open', 'mid_max': 'high', 'mid_min': 'low', 'mid_last': 'close',
+        'bid_price_last': 'bid_close', 'ask_price_last': 'ask_close',
     })
-    return final[['bid_qty', 'ask_qty', 'open', 'high', 'low', 'close']]
+    return final[['bid_qty', 'ask_qty', 'open', 'high', 'low', 'close', 'bid_close', 'ask_close']]
 
 def main():
     parser = argparse.ArgumentParser(description="Download and process Binance L2 BookTicker Data for OBI.")
@@ -155,6 +163,7 @@ def main():
     result_df = result_df.groupby(result_df.index).agg({
         'bid_qty': 'sum', 'ask_qty': 'sum',
         'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
+        'bid_close': 'last', 'ask_close': 'last',
     })
 
     # Calculate the true mathematical OBI for the final dataset
@@ -163,8 +172,11 @@ def main():
     # Keep OHLC alongside obi: at sub-minute granularity no separate kline
     # archive exists to pair with it, so this file doubles as the price
     # series too (see backtest_maker_fill.py --data / --obi-data, both of
-    # which can point at this same file for a sub-minute run).
-    final_feature_df = result_df[['open', 'high', 'low', 'close', 'obi']]
+    # which can point at this same file for a sub-minute run). bid_close/
+    # ask_close are the real last-observed quotes per bar (NOT derived from
+    # mid) -- a market-making backtest needs the actual spread, which is
+    # exactly what averaging into a single mid price would erase.
+    final_feature_df = result_df[['open', 'high', 'low', 'close', 'bid_close', 'ask_close', 'obi']]
 
     safe_symbol = args.symbol
     filename = f"binance_l2obi_{safe_symbol}_{args.timeframe}.csv"
