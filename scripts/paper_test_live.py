@@ -67,7 +67,12 @@ def load_state() -> pd.DataFrame:
         return pd.DataFrame(columns=STATE_COLUMNS)
     df = pd.read_csv(STATE_PATH)
     for col in DATETIME_COLS:
-        df[col] = pd.to_datetime(df[col])
+        # Force a fixed (ns) resolution rather than whatever pandas infers
+        # from the CSV's own timestamps (e.g. whole-second signal times
+        # round-trip as datetime64[s]). Otherwise assigning a
+        # microsecond-precision `now` into a second-resolution column
+        # raises: "Cannot losslessly convert units".
+        df[col] = pd.to_datetime(df[col]).astype('datetime64[ns]')
     return df
 
 
