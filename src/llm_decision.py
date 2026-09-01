@@ -95,23 +95,50 @@ def parse_decision(text: str) -> dict:
 
 
 def get_llm_decision(client, model: str, asset: str, side: int, signal_price: float,
-                      atr: float, features: dict) -> dict:
-    """Call the Anthropic Messages API to approve/reject one candidate
-    trade. `client` is an `anthropic.Anthropic`-shaped object (injected so
-    tests can pass a fake) exposing `.messages.create(...)`. Any API
-    failure is treated the same as an unparseable response -- reject,
-    never approve on an error.
+                      atr: float, features: dict, max_tokens: int = 1024) -> dict:
+    """Call the Messages API (works against the real Anthropic API, or any
+    Anthropic-Messages-API-compatible gateway/proxy set via base_url) to
+    approve/reject one candidate trade. `client` is injected so tests can
+    pass a fake.
+
+    Fails closed (reject) on any problem, and reports which kind
+    separately rather than lumping them all into one label -- a request
+    exception (bad model name, auth, rate limit) looks nothing like a
+    response that came back successfully but with no text (observed in
+    practice: a thinking-capable model burning its entire `max_tokens`
+    budget on internal reasoning and never emitting the JSON answer), and
+    conflating the two makes a real bug indistinguishable from a normal
+    API error. `max_tokens` defaults generously for the same reason -- a
+    tight budget can be consumed entirely by a model's own reasoning
+    before it reaches the answer.
     """
     prompt = build_decision_prompt(asset, side, signal_price, atr, features)
     try:
         response = client.messages.create(
             model=model,
-            max_tokens=200,
+            max_tokens=max_tokens,
             system=DECISION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(block.text for block in response.content
-                        if getattr(block, 'type', None) == 'text')
     except Exception as exc:
-        return {'decision': 'reject', 'confidence': 0.0, 'reason': f'API error: {exc}'}
-    return parse_decision(text)
+        return {'decision': 'reject', 'confidence': 0.0,
+                'reason': f'API error ({type(exc).__name__}): {exc}'}
+
+    # `content` can legitimately be empty/None on some gateways even
+    # without raising -- never iterate it directly inside the try above,
+    # or a local bug here gets misreported as an "API error".
+    content = getattr(response, 'content', None) or []
+    text = "".join(getattr(block, 'text', '') for block in content
+                   if getattr(block, 'type', None) == 'text')
+
+    if not text:
+        block_types = [getattr(block, 'type', '?') for block in content]
+        return {'decision': 'reject', 'confidence': 0.0,
+                'reason': f'no text in response (blocks={block_types}, '
+                          f"stop_reason={getattr(response, 'stop_reason', None)}) -- "
+                          f'try a higher max_tokens if a thinking block used up the budget'}
+
+    decision = parse_decision(text)
+    if decision['reason'] == 'unparseable response':
+        decision['reason'] = f'unparseable response: {text[:200]!r}'
+    return decision

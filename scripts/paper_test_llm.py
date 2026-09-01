@@ -140,6 +140,11 @@ def main():
                               "ANTHROPIC_BASE_URL env var if set, else the real "
                               "https://api.anthropic.com). Only needed if you're routing "
                               "through a different Anthropic-compatible gateway/proxy.")
+    parser.add_argument("--max-tokens", type=int, default=1024,
+                         help="Max output tokens per decision call. Raise this if a "
+                              "thinking-capable model/gateway is burning its whole budget "
+                              "on reasoning and never emitting the JSON answer (shows up as "
+                              "llm_reason='no text in response ... stop_reason=max_tokens').")
     args = parser.parse_args()
 
     client = make_llm_client(base_url=args.base_url)
@@ -167,7 +172,8 @@ def main():
                                (state['signal_time'] == candidate['signal_time'])).any()
             if not already_logged:
                 decision = get_llm_decision(client, args.model, asset, candidate['side'],
-                                             candidate['signal_price'], candidate['atr'], features)
+                                             candidate['signal_price'], candidate['atr'], features,
+                                             max_tokens=args.max_tokens)
                 candidate['llm_decision'] = decision['decision']
                 candidate['llm_confidence'] = decision['confidence']
                 candidate['llm_reason'] = decision['reason']

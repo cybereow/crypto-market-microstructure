@@ -219,6 +219,12 @@ def main():
                               "reported confidence is >= this (0-1). Raising it trades fewer, "
                               "hopefully higher-quality, setups -- same precision/threshold "
                               "tradeoff as src/calibration.py's traditional-ML gate.")
+    parser.add_argument("--max-tokens", type=int, default=1024,
+                         help="Max output tokens per decision call. Raise this if a "
+                              "thinking-capable model/gateway is burning its whole budget "
+                              "on reasoning and never emitting the JSON answer (shows up as "
+                              "reason='no text in response ... stop_reason=max_tokens' in "
+                              "the cache).")
     args = parser.parse_args()
 
     api_key = os.environ.get('ANTHROPIC_API_KEY')
@@ -251,7 +257,7 @@ def main():
 
         decision = get_llm_decision(client, args.model, row['asset'], int(row['side']),
                                      float(row['signal_price']), float(row['atr']),
-                                     features_by_key[key])
+                                     features_by_key[key], max_tokens=args.max_tokens)
         new_rows.append({'asset': row['asset'], 'signal_time': ts,
                           'decision': decision['decision'], 'confidence': decision['confidence'],
                           'reason': decision['reason']})

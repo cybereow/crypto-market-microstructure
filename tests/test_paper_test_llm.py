@@ -67,7 +67,7 @@ def _run_main(monkeypatch, assets, candidates, decisions, state_csv):
         return candidates.get(asset, (None, None))
     monkeypatch.setattr(paper_test_llm, "detect_new_signal", fake_detect)
 
-    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features):
+    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
         return decisions[asset]
     monkeypatch.setattr(paper_test_llm, "get_llm_decision", fake_get_llm_decision)
     monkeypatch.setattr(paper_test_llm, "ASSETS", assets)
@@ -132,7 +132,7 @@ def test_main_idempotent_does_not_re_ask_llm_for_already_logged_signal(monkeypat
     monkeypatch.setattr(paper_test_llm, "detect_new_signal",
                          lambda exchange, asset, now: candidates.get(asset, (None, None)))
 
-    def counting_decision(client, model, asset, side, signal_price, atr, features):
+    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
         call_count['n'] += 1
         return {'decision': 'approve', 'confidence': 0.9, 'reason': 'ok'}
     monkeypatch.setattr(paper_test_llm, "get_llm_decision", counting_decision)

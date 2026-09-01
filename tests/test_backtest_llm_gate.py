@@ -73,7 +73,7 @@ def _patch_common(monkeypatch, tmp_path, argv):
 def test_main_caches_decisions_and_writes_results(monkeypatch, tmp_path, capsys):
     _patch_common(monkeypatch, tmp_path, ["backtest_llm_gate.py", "--data", "x.csv"])
 
-    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features):
+    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
         # Approve longs, reject shorts -- a clean, testable split.
         decision = 'approve' if side > 0 else 'reject'
         return {'decision': decision, 'confidence': 0.75, 'reason': f'side={side}'}
@@ -100,7 +100,7 @@ def test_main_idempotent_does_not_recall_llm_for_cached_candidates(monkeypatch, 
 
     call_count = {'n': 0}
 
-    def counting_decision(client, model, asset, side, signal_price, atr, features):
+    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
         call_count['n'] += 1
         return {'decision': 'approve', 'confidence': 0.9, 'reason': 'ok'}
     monkeypatch.setattr(backtest_llm_gate, "get_llm_decision", counting_decision)
@@ -116,7 +116,7 @@ def test_main_respects_limit(monkeypatch, tmp_path):
 
     call_count = {'n': 0}
 
-    def counting_decision(client, model, asset, side, signal_price, atr, features):
+    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
         call_count['n'] += 1
         return {'decision': 'approve', 'confidence': 0.9, 'reason': 'ok'}
     monkeypatch.setattr(backtest_llm_gate, "get_llm_decision", counting_decision)
@@ -141,7 +141,7 @@ def test_main_min_confidence_filters_low_confidence_approvals(monkeypatch, tmp_p
                   ["backtest_llm_gate.py", "--data", "x.csv", "--min-confidence", "0.7"])
 
     # side=1 candidates get high confidence, side=-1 get low confidence -- both 'approve'.
-    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features):
+    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
         confidence = 0.9 if side > 0 else 0.3
         return {'decision': 'approve', 'confidence': confidence, 'reason': 'x'}
     monkeypatch.setattr(backtest_llm_gate, "get_llm_decision", fake_get_llm_decision)

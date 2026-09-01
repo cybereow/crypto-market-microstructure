@@ -68,29 +68,43 @@ class _FakeTextBlock:
         self.text = text
 
 
+class _FakeThinkingBlock:
+    def __init__(self, thinking):
+        self.type = 'thinking'
+        self.thinking = thinking
+
+
 class _FakeResponse:
-    def __init__(self, text):
-        self.content = [_FakeTextBlock(text)]
+    def __init__(self, content, stop_reason='end_turn'):
+        self.content = content
+        self.stop_reason = stop_reason
 
 
 class _FakeMessages:
-    def __init__(self, text=None, exc=None):
-        self._text = text
+    def __init__(self, response=None, exc=None):
+        self._response = response
         self._exc = exc
+        self.last_kwargs = None
 
     def create(self, **kwargs):
+        self.last_kwargs = kwargs
         if self._exc is not None:
             raise self._exc
-        return _FakeResponse(self._text)
+        return self._response
 
 
 class _FakeClient:
-    def __init__(self, text=None, exc=None):
-        self.messages = _FakeMessages(text=text, exc=exc)
+    def __init__(self, response=None, exc=None):
+        self.messages = _FakeMessages(response=response, exc=exc)
+
+
+def _text_response(text):
+    return _FakeResponse([_FakeTextBlock(text)])
 
 
 def test_get_llm_decision_parses_successful_response():
-    client = _FakeClient(text='{"decision": "approve", "confidence": 0.9, "reason": "clean setup"}')
+    client = _FakeClient(response=_text_response(
+        '{"decision": "approve", "confidence": 0.9, "reason": "clean setup"}'))
     result = get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
     assert result['decision'] == 'approve'
     assert result['confidence'] == 0.9
@@ -101,3 +115,53 @@ def test_get_llm_decision_fails_closed_on_api_error():
     result = get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
     assert result['decision'] == 'reject'
     assert 'connection reset' in result['reason']
+    assert 'RuntimeError' in result['reason']
+
+
+def test_get_llm_decision_fails_closed_when_content_is_none():
+    """Regression test: a response with content=None (seen in practice from a
+    non-Anthropic model routed through a gateway) must never be iterated
+    directly -- that raised TypeError and got mislabeled as an "API error"
+    even though the request itself succeeded.
+    """
+    client = _FakeClient(response=_FakeResponse(None, stop_reason='end_turn'))
+    result = get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
+    assert result['decision'] == 'reject'
+    assert 'no text in response' in result['reason']
+    assert 'API error' not in result['reason']
+
+
+def test_get_llm_decision_fails_closed_when_only_thinking_block_present():
+    """Regression test: a thinking-capable model that spends its whole
+    max_tokens budget on internal reasoning and never emits the JSON
+    answer must be reported distinctly (with stop_reason) rather than as
+    an unparseable response with no useful diagnostic.
+    """
+    client = _FakeClient(response=_FakeResponse(
+        [_FakeThinkingBlock('reasoning about the trade...')], stop_reason='max_tokens'))
+    result = get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
+    assert result['decision'] == 'reject'
+    assert 'max_tokens' in result['reason']
+    assert 'thinking' in result['reason']
+
+
+def test_get_llm_decision_includes_raw_text_snippet_when_unparseable():
+    client = _FakeClient(response=_text_response("sure, let me think about this trade..."))
+    result = get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
+    assert result['decision'] == 'reject'
+    assert 'let me think about this trade' in result['reason']
+
+
+def test_get_llm_decision_passes_max_tokens_through():
+    client = _FakeClient(response=_text_response(
+        '{"decision": "approve", "confidence": 0.5, "reason": "x"}'))
+    get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES,
+                     max_tokens=2048)
+    assert client.messages.last_kwargs['max_tokens'] == 2048
+
+
+def test_get_llm_decision_defaults_max_tokens_generously():
+    client = _FakeClient(response=_text_response(
+        '{"decision": "approve", "confidence": 0.5, "reason": "x"}'))
+    get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
+    assert client.messages.last_kwargs['max_tokens'] >= 1024
