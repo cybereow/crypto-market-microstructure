@@ -31,7 +31,8 @@ from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           volatility_breakout_entries, trend_pullback_entries,
-                          range_fade_entries, obi_momentum_entries, triple_barrier_labels)
+                          range_fade_entries, obi_momentum_entries,
+                          funding_extreme_reversion_entries, triple_barrier_labels)
 from src.regime import build_btc_regime, add_alignment_features, REGIME_FEATURE_COLS
 from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
                              precision_threshold_table)
@@ -67,6 +68,10 @@ SIGNAL_BUILDERS = {
     # Order-flow, not price action -- requires an 'obi' column (see
     # scripts/download_l2_obi.py and --obi-data on backtest_maker_fill.py).
     'obi_momentum': lambda df, lookback: obi_momentum_entries(df, lookback=lookback),
+    # Alt-data, not price/order-book action -- requires a 'funding_rate'
+    # column (see scripts/download_funding_vision.py and
+    # scripts/backtest_funding_reversion.py).
+    'funding_reversion': lambda df, lookback: funding_extreme_reversion_entries(df, lookback=lookback),
 }
 
 

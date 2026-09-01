@@ -1,7 +1,8 @@
 import pandas as pd
 
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
-                          obi_momentum_entries, triple_barrier_labels)
+                          obi_momentum_entries, funding_extreme_reversion_entries,
+                          triple_barrier_labels)
 
 
 def test_triple_barrier_profit_take_hit():
@@ -117,3 +118,42 @@ def test_obi_momentum_entries_no_repeat_while_extreme_persists():
     assert entries.iloc[5] == 1
     assert entries.iloc[6] == 0
     assert entries.iloc[7] == 0
+
+
+def test_funding_extreme_reversion_entries_fades_not_follows():
+    """Mirror image of OBI momentum's mechanics (cross a rolling quantile)
+    but the OPPOSITE direction: extreme positive funding (crowded longs)
+    fades with a SHORT, extreme negative funding (crowded shorts) fades
+    with a LONG. Getting the sign backwards here would silently turn this
+    into a momentum signal instead of the mean-reversion one it's meant
+    to be -- exactly the kind of mistake test_new_signals.py's range_fade
+    tests already caught once for a different signal.
+    """
+    dates = pd.date_range("2023-01-01", periods=12, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': [0.0001, 0.0001, 0.0001, 0.0001, 0.0001,   # flat baseline
+                         0.01,                                     # spike up -> fade -> SHORT
+                         0.0001, 0.0001, 0.0001, 0.0001, 0.0001,   # back to flat baseline
+                         -0.01],                                   # spike down -> fade -> LONG
+    }, index=dates)
+    entries = funding_extreme_reversion_entries(df, lookback=5, quantile=0.8)
+    assert entries.iloc[5] == -1
+    assert entries.iloc[11] == 1
+    assert (entries.drop(entries.index[[5, 11]]) == 0).all()
+
+
+def test_funding_extreme_reversion_entries_no_repeat_while_extreme_persists():
+    dates = pd.date_range("2023-01-01", periods=8, freq="4h")
+    df = pd.DataFrame({'funding_rate': [0.0001] * 5 + [0.01, 0.011, 0.012]}, index=dates)
+    entries = funding_extreme_reversion_entries(df, lookback=5, quantile=0.8)
+    assert entries.iloc[5] == -1
+    assert entries.iloc[6] == 0
+    assert entries.iloc[7] == 0
+
+
+def test_funding_extreme_reversion_entries_uses_custom_column_name():
+    dates = pd.date_range("2023-01-01", periods=6, freq="4h")
+    df = pd.DataFrame({'my_funding': [0.0001] * 5 + [0.01]}, index=dates)
+    entries = funding_extreme_reversion_entries(df, lookback=5, quantile=0.8,
+                                                funding_col='my_funding')
+    assert entries.iloc[5] == -1

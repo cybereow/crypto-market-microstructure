@@ -721,6 +721,53 @@ Run on your own data:
 python scripts/backtest_market_making.py --data binance_l2obi_BTCUSDT_5s.csv --k-spread 10.0
 ```
 
+### 14. Funding-rate-extreme reversion — a genuinely new alt-data signal, close but not significant
+
+`scripts/download_funding_vision.py`'s own docstring had stated a hypothesis
+since early in this project — extreme positive perpetual-futures funding
+(longs paying shorts an unusually large premium) has historically preceded
+local tops, and vice versa — but nothing had ever turned it into an actual
+entry rule and tested it. `src.labeling.funding_extreme_reversion_entries`
+does: **fade** the crowd (short when funding crosses up through its own
+rolling 90-bar/15-day 90th percentile; long on the symmetric downside
+cross), the opposite direction from `obi_momentum_entries`'s
+follow-the-pressure rule despite similar quantile-crossing mechanics.
+
+This is a genuinely different data source from every other signal in this
+project except OBI (section 11): it comes from the perpetual funding
+mechanism, not price/volume history, so it isn't already priced into the
+technical indicators every other participant is also computing.
+
+**Result, pooled across BTC/ETH/SOL perpetual futures, full available
+history (2020-01-01 to 2026-07-31, 4h bars):**
+
+| | n | win rate | PF | exp/trade | p-value |
+|---|---|---|---|---|---|
+| TAKER (instant fill, 0.40% cost) | 2439 | 51.7% | 0.87 | −0.29% | 0.998 |
+| MAKER (simulated fill, 88.8% fill rate, 0.08% cost) | 2167 | 52.2% | 1.07 | **+0.14%** | **0.112** |
+
+Same pattern as section 8→9 (taker cost kills it, maker cost recovers a
+positive expectancy) — but unlike section 9's 0.08%-cost result (p=0.03 at
+one config, which then failed a robustness sweep at p=0.115), this one
+starts already short of the p<0.05 bar on its first, single, a-priori
+test — no sweep, no cherry-picked configuration. **Verdict: promising, but
+not (yet) significant.** Positive point estimate on a real, fairly large
+sample (2167 filled trades across three assets and six years) is a
+genuinely different outcome from the outright-null OBI result (section 11)
+or market-making's structural rejection (section 13) — but "close to 0.05"
+is not "under 0.05," and this repo does not round that corner.
+
+Run on your own data:
+```bash
+python scripts/download_klines_vision.py --symbol BTCUSDT --timeframe 4h --market futures --start-date 2020-01-01
+python scripts/download_funding_vision.py --symbol BTCUSDT --start-date 2020-01-01 --end-date 2026-07-31
+# ...repeat for ETHUSDT, SOLUSDT...
+
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
+```
+
 ## Project structure
 
 ```
@@ -743,6 +790,7 @@ trading-bot/
 │   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9) and daily-timeframe experiment (§10)
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
+│   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14)
 │   └── backtest_grid.py               # Grid Trading bot backtest
 ├── src/
 │   ├── config.py               # Project settings and paths

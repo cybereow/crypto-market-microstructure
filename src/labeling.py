@@ -221,6 +221,50 @@ def obi_momentum_entries(df: pd.DataFrame, lookback: int = 288, obi_col: str = '
     return entries
 
 
+def funding_extreme_reversion_entries(df: pd.DataFrame, lookback: int = 90,
+                                       quantile: float = 0.90,
+                                       funding_col: str = 'funding_rate') -> pd.Series:
+    """Primary signal from perpetual-futures FUNDING RATE, not price action
+    or the order book: fade the crowd when funding sits at its own recent
+    extreme.
+
+    Rationale, and why this is a genuinely different bet from every other
+    signal in this repo (see scripts/download_funding_vision.py, which
+    already documents this hypothesis but had never been wired into an
+    actual entry rule until this function): funding is a periodic payment
+    from longs to shorts (when positive) or shorts to longs (when
+    negative), sized to keep the perpetual's price tracking spot. An
+    unusually high positive funding rate means longs are paying an
+    unusually large premium to stay long -- direct evidence of crowded,
+    leveraged long positioning, which is unusually exposed to a
+    liquidation cascade on any dip (the same mechanism behind "extreme
+    funding precedes local tops" being a standard piece of crypto-trading
+    lore). The symmetric case (extreme negative funding) is crowded
+    shorts, prone to a short-squeeze bounce. This is therefore a FADE
+    (mean-reversion) signal, the opposite direction from
+    `obi_momentum_entries`'s follow-the-pressure rule, despite the
+    similar "cross a rolling quantile" mechanics: -1 (short) fires when
+    funding crosses UP through its own rolling upper quantile (crowded
+    longs -> fade with a short); +1 (long) fires on the symmetric
+    downside cross (crowded shorts -> fade with a long).
+
+    `lookback` sets the window funding's own recent extremes are measured
+    against (default 90 bars = 15 days at 4h), so "extreme" adapts to
+    each period's prevailing funding regime (which shifts with the
+    market's overall bull/bear structure) instead of a fixed absolute
+    cutoff.
+    """
+    funding = df[funding_col]
+    upper = funding.rolling(lookback).quantile(quantile).shift(1)
+    lower = funding.rolling(lookback).quantile(1 - quantile).shift(1)
+    prev = funding.shift(1)
+
+    entries = pd.Series(0, index=df.index)
+    entries[(prev <= upper) & (funding > upper)] = -1
+    entries[(prev >= lower) & (funding < lower)] = 1
+    return entries
+
+
 def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
                            pt_mult: float = 1.5, sl_mult: float = 1.0,
                            max_holding: int = 18) -> pd.DataFrame:

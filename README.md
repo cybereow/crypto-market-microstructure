@@ -63,6 +63,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §11-b | Same OBI signal re-tested at tick level (5-second bars): strongly significant (p=0.0003), robust to a direction-flip check and a time-split check | Real edge — but ~10x too small to clear even optimistic maker fees |
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
+| §14 | Funding-rate-extreme reversion (fade crowded long/short perpetual positioning) — a new alt-data signal, single a-priori config, pooled 2020-2026: maker-cost PF 1.07, exp +0.14%, p=0.112 | Promising, but **not significant** |
 
 ## Project layout
 
@@ -82,6 +83,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_cross_sectional.py     # Cross-sectional ranking strategy
 │   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11)
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
+│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
 │   ├── backtest_llm_gate.py            # LLM gate backtested against already-downloaded history
@@ -99,7 +101,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log, §1-13
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-14
 ```
 
 ## Setup
@@ -159,7 +161,21 @@ ranking, order-flow imbalance, market making, live paper-testing) each have
 their own script under `scripts/` — see the project layout above, or
 `docs/RESEARCH_LOG.md` for the exact command used in each experiment.
 
-**5. LLM-gated shadow paper-trade (experimental, no capital at risk):**
+**5. Funding-rate-extreme reversion** (§14, alt-data, promising but not yet
+significant — p=0.112 at maker cost on the full 2020-2026 pooled history):
+
+```bash
+for s in BTCUSDT ETHUSDT SOLUSDT; do
+  python scripts/download_klines_vision.py --symbol $s --timeframe 4h --market futures --start-date 2020-01-01
+  python scripts/download_funding_vision.py --symbol $s --start-date 2020-01-01 --end-date 2026-07-31
+done
+
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
+```
+
+**6. LLM-gated shadow paper-trade (experimental, no capital at risk):**
 same `vol_breakout` candidate detection as step 4's live paper-trader, but
 each candidate must also be approved by Claude (via the Messages API)
 before it's logged as a paper trade — every candidate is recorded either
