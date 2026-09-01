@@ -83,6 +83,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11)
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
+│   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
 │   └── backtest_grid.py                # Grid trading backtest
 ├── src/
@@ -90,6 +91,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── execution.py      # Maker-order queue fill simulation (§9)
 │   ├── market_making.py  # Two-sided quote/fill/inventory simulator with skew (§13)
 │   ├── paper_trading.py  # Live shadow paper-trading state machine (§12)
+│   ├── llm_decision.py   # LLM (Claude) approve/reject gate for paper_test_llm.py
 │   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
 │   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
 │   ├── metrics.py        # Trade-level win rate / profit factor
@@ -155,6 +157,20 @@ Other strategies (grid trading, statistical-arbitrage pairs, cross-sectional
 ranking, order-flow imbalance, market making, live paper-testing) each have
 their own script under `scripts/` — see the project layout above, or
 `docs/RESEARCH_LOG.md` for the exact command used in each experiment.
+
+**5. LLM-gated shadow paper-trade (experimental, no capital at risk):**
+same `vol_breakout` candidate detection as step 4's live paper-trader, but
+each candidate must also be approved by Claude (via the Messages API)
+before it's logged as a paper trade — every candidate is recorded either
+way, so the gate's effect can be compared against the ungated run later.
+This is explicitly *not* held to this repo's usual statistical bar (see
+[`src/llm_decision.py`](src/llm_decision.py) for why) — it's a probe, not
+a validated strategy:
+
+```bash
+export ANTHROPIC_API_KEY=...
+python scripts/paper_test_llm.py --assets BTC/USDT ETH/USDT SOL/USDT
+```
 
 ## Testing
 
