@@ -768,6 +768,67 @@ python scripts/backtest_funding_reversion.py \
   --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
 ```
 
+### 15. OBV divergence — null, and the maker-cost edge is adverse-selected away
+
+Two more independent-data-source ideas were tested alongside funding
+(section 14), each from a different angle on the same underlying
+question (is crowd positioning/participation, not price history alone,
+where an edge might still be findable): `src.labeling.obv_divergence_entries`
+fades a price breakout that on-balance volume (a running sum of volume
+signed by price direction) doesn't confirm — a new N-bar price high
+without a new N-bar OBV high is thin, unconvincing buying pressure behind
+the move (and the symmetric case for a price low).
+
+**Result, pooled across BTC/ETH/SOL perpetual futures, full history:**
+2824 candidates, taker PF 0.85 (p=0.9995), maker PF 1.02 (p=0.3328) —
+already not significant on the point estimate alone. Worse: the
+adverse-selection check this repo runs on every maker-fill result (README
+section 9) shows the trades that FAILED to fill would have won 76.4% of
+the time (taker basis) versus 46.5% for the ones that did fill — a +29.9
+point gap. **The small maker-cost PF is not a real edge; it's what's left
+after the winning setups get away before the passive limit order can
+reach them.** Verdict: **Null**, and instructively so — this is the same
+failure mode section 9's own general caveat warns about, caught directly
+by this repo's existing adverse-selection tooling on the first run.
+
+```bash
+python scripts/backtest_maker_fill.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --signal obv_divergence --pt-mult 2.0 --sl-mult 2.0
+```
+
+### 16. BTC-lead-lag on altcoins — null
+
+The third angle: does BTC's own recent momentum, traded on a DIFFERENT
+asset (ETH, SOL), carry an edge — a cross-asset lead-lag bet, betting an
+altcoin hasn't fully "caught up" to a strong BTC move yet? Structurally
+unlike every other signal in this repo, which conditions only on the
+traded asset's own history; `src.labeling.btc_lead_lag_entries` reuses
+`src.regime.build_btc_regime`'s already-tested `btc_ret_5` column
+(previously only used as a meta-labeling gate feature, never as a primary
+signal in its own right).
+
+**Result, pooled across ETH+SOL perpetual futures vs. BTC, full history,
+threshold=+/-3% on BTC's trailing 5-bar return:** 1930 candidates, taker
+PF 0.87 (p=0.9932), maker PF 0.97 (p=0.7207) — expectancy is NEGATIVE even
+at maker cost. **Verdict: Null.** No adverse-selection games needed here;
+the point estimate itself never gets close to break-even.
+
+```bash
+python scripts/backtest_btc_lead_lag.py \
+  --data binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --btc-data binance_futures_BTC_USDT_4h.csv
+```
+
+**Where this leaves the three-alt-data-source sweep (sections 14-16):**
+funding-extreme-reversion is the only one of the three with a positive,
+sample-backed point estimate (still short of significance); OBV
+divergence and BTC-lead-lag are both null, one of them for an
+instructive, previously-documented reason (adverse selection) rather
+than a new one. Reporting all three, not just the promising one, is the
+point of this log — see section 7 for what happens when that discipline
+slips.
+
 ## Project structure
 
 ```
@@ -787,10 +848,11 @@ trading-bot/
 │   ├── backtest_meta_ml.py            # Single-asset meta-labeling backtest
 │   ├── backtest_meta_ml_walkforward.py# Walk-forward validation of the meta-labeling model
 │   ├── backtest_cross_sectional.py    # Cross-sectional ranking strategy across assets
-│   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9) and daily-timeframe experiment (§10)
+│   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9), daily-timeframe experiment (§10), OBV divergence (§15)
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
 │   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14)
+│   ├── backtest_btc_lead_lag.py       # BTC-lead-lag cross-asset signal backtest (§16)
 │   └── backtest_grid.py               # Grid Trading bot backtest
 ├── src/
 │   ├── config.py               # Project settings and paths

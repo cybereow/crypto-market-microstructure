@@ -265,6 +265,82 @@ def funding_extreme_reversion_entries(df: pd.DataFrame, lookback: int = 90,
     return entries
 
 
+def obv_divergence_entries(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
+    """Primary signal: fade a price breakout that volume flow doesn't confirm.
+
+    Rationale: on-balance volume (OBV, a running sum of each bar's volume
+    signed by that bar's price direction) is meant to track buying/selling
+    PRESSURE behind a move, not the price move itself. When price prints a
+    new `lookback`-bar high but OBV does NOT also print a new
+    `lookback`-bar high, the rally is happening without proportional
+    volume behind it -- classic bearish divergence, and evidence the move
+    is thinner/more exhausted than the price chart alone suggests. The
+    symmetric case (a new price low without a new OBV low) is bullish
+    divergence. Like `funding_extreme_reversion_entries`, this is
+    therefore a FADE signal -- but built from this asset's OWN volume
+    flow rather than perpetual-futures positioning, so it's a third,
+    independent bet alongside funding and OBI (order-book imbalance,
+    section 11): three different alt-data sources testing the same
+    underlying idea (crowd positioning/participation, not price history
+    alone, is where an edge might still be findable) from three different
+    angles.
+
+    Mirrors `donchian_breakout_entries`'s no-lookahead convention exactly
+    (compare the current bar against the PRIOR `lookback` bars' extreme,
+    via `.shift(1)`) so a "new high/low" here means the same thing it
+    means everywhere else in this repo.
+    """
+    obv = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+
+    prior_price_high = df['close'].rolling(lookback).max().shift(1)
+    prior_price_low = df['close'].rolling(lookback).min().shift(1)
+    prior_obv_high = obv.rolling(lookback).max().shift(1)
+    prior_obv_low = obv.rolling(lookback).min().shift(1)
+
+    price_breaks_high = df['close'] > prior_price_high
+    price_breaks_low = df['close'] < prior_price_low
+    obv_confirms_high = obv > prior_obv_high
+    obv_confirms_low = obv < prior_obv_low
+
+    entries = pd.Series(0, index=df.index)
+    entries[price_breaks_high & ~obv_confirms_high] = -1
+    entries[price_breaks_low & ~obv_confirms_low] = 1
+    return entries
+
+
+def btc_lead_lag_entries(df: pd.DataFrame, threshold: float = 0.03,
+                          btc_ret_col: str = 'btc_ret_5') -> pd.Series:
+    """Primary signal: BTC's own recent momentum, traded on a DIFFERENT
+    asset (an altcoin) -- a cross-asset lead-lag bet, structurally unlike
+    every other signal in this repo (all of which condition only on the
+    traded asset's own price/volume/positioning history).
+
+    Rationale: BTC is crypto's dominant liquidity venue and the asset
+    most capital flows through first; altcoins routinely play "catch up"
+    with a short lag rather than moving in perfect lockstep, so a strong
+    BTC move not yet mirrored in an altcoin's own price is a candidate
+    signal that the alt hasn't finished repricing. +1 (long) fires the
+    bar BTC's trailing return crosses UP through `threshold`; -1 (short)
+    on the symmetric downside cross. Fires on the CROSSING bar only (like
+    `obi_momentum_entries`/`funding_extreme_reversion_entries`), not
+    every bar the condition holds, so a sustained BTC move doesn't spawn
+    one overlapping candidate per bar.
+
+    `df` must already carry `btc_ret_col` -- BTC's own trailing return,
+    reindexed onto this asset's own timestamps and forward-filled. Reuses
+    `src.regime.build_btc_regime`'s `btc_ret_5` column by default rather
+    than recomputing BTC's return from scratch (see
+    scripts/backtest_btc_lead_lag.py for how the join is built).
+    """
+    btc_ret = df[btc_ret_col]
+    prev = btc_ret.shift(1)
+
+    entries = pd.Series(0, index=df.index)
+    entries[(prev <= threshold) & (btc_ret > threshold)] = 1
+    entries[(prev >= -threshold) & (btc_ret < -threshold)] = -1
+    return entries
+
+
 def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
                            pt_mult: float = 1.5, sl_mult: float = 1.0,
                            max_holding: int = 18) -> pd.DataFrame:

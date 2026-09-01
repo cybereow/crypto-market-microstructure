@@ -64,6 +64,8 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
 | §14 | Funding-rate-extreme reversion (fade crowded long/short perpetual positioning) — a new alt-data signal, single a-priori config, pooled 2020-2026: maker-cost PF 1.07, exp +0.14%, p=0.112 | Promising, but **not significant** |
+| §15 | OBV divergence (fade a price breakout volume doesn't confirm) — maker PF 1.02 looked marginal, but unfilled candidates would-be won 76.4% vs 46.5% for filled | **Null** — adverse-selected away |
+| §16 | BTC-lead-lag on altcoins (trade ETH/SOL off BTC's own momentum) — cross-asset, pooled 2020-2026 | **Null** — negative expectancy even at maker cost |
 
 ## Project layout
 
@@ -81,9 +83,10 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_meta_ml.py             # Single-asset meta-labeling backtest
 │   ├── backtest_meta_ml_walkforward.py # The real validator: pooled, purged, walk-forward
 │   ├── backtest_cross_sectional.py     # Cross-sectional ranking strategy
-│   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11)
+│   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11, §15)
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
 │   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14)
+│   ├── backtest_btc_lead_lag.py        # BTC-lead-lag cross-asset signal backtest (§16)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
 │   ├── backtest_llm_gate.py            # LLM gate backtested against already-downloaded history
@@ -101,7 +104,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log, §1-14
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-16
 ```
 
 ## Setup
@@ -174,6 +177,15 @@ python scripts/backtest_funding_reversion.py \
   --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
   --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
 ```
+
+Two more alt-data ideas were tested alongside it and came back **null**
+(§15-16, full detail and honest numbers in `docs/RESEARCH_LOG.md`) —
+`--signal obv_divergence` on `backtest_maker_fill.py` (adverse-selected
+away), and `python scripts/backtest_btc_lead_lag.py --data
+binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv --btc-data
+binance_futures_BTC_USDT_4h.csv` (negative expectancy even at maker
+cost). Reported here for the same reason every rejected idea in this
+project is: a null result is still a result.
 
 **6. LLM-gated shadow paper-trade (experimental, no capital at risk):**
 same `vol_breakout` candidate detection as step 4's live paper-trader, but

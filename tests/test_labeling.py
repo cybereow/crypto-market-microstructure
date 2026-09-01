@@ -2,6 +2,7 @@ import pandas as pd
 
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           obi_momentum_entries, funding_extreme_reversion_entries,
+                          obv_divergence_entries, btc_lead_lag_entries,
                           triple_barrier_labels)
 
 
@@ -157,3 +158,76 @@ def test_funding_extreme_reversion_entries_uses_custom_column_name():
     entries = funding_extreme_reversion_entries(df, lookback=5, quantile=0.8,
                                                 funding_col='my_funding')
     assert entries.iloc[5] == -1
+
+
+def test_obv_divergence_entries_bearish_when_price_high_not_confirmed_by_obv():
+    """Price prints a new 3-bar high at the last bar, but that bar's up-move
+    happens on tiny volume (5) versus an earlier, bigger up-move (50) that
+    was then partly given back -- OBV's own prior high (50) is never
+    retested (ends at 45), so the breakout is unconfirmed -> fade short.
+    """
+    dates = pd.date_range("2023-01-01", periods=4, freq="4h")
+    df = pd.DataFrame({
+        'close': [100.0, 105.0, 103.0, 106.0],
+        'volume': [10.0, 50.0, 10.0, 5.0],
+    }, index=dates)
+    entries = obv_divergence_entries(df, lookback=3)
+    assert entries.iloc[3] == -1
+
+
+def test_obv_divergence_entries_bullish_when_price_low_not_confirmed_by_obv():
+    """Symmetric case: a new 3-bar price LOW on tiny volume, while OBV's
+    own prior low is never retested -> fade long.
+    """
+    dates = pd.date_range("2023-01-01", periods=4, freq="4h")
+    df = pd.DataFrame({
+        'close': [100.0, 95.0, 97.0, 94.0],
+        'volume': [10.0, 50.0, 10.0, 5.0],
+    }, index=dates)
+    entries = obv_divergence_entries(df, lookback=3)
+    assert entries.iloc[3] == 1
+
+
+def test_obv_divergence_entries_silent_when_obv_confirms_the_breakout():
+    """Same price shape as a breakout, but volume tracks price move-for-move
+    so OBV makes its own new high right alongside price -- no divergence,
+    no signal.
+    """
+    dates = pd.date_range("2023-01-01", periods=4, freq="4h")
+    df = pd.DataFrame({
+        'close': [100.0, 101.0, 102.0, 103.0],
+        'volume': [10.0, 10.0, 10.0, 10.0],
+    }, index=dates)
+    entries = obv_divergence_entries(df, lookback=3)
+    assert (entries == 0).all()
+
+
+def test_btc_lead_lag_entries_direction():
+    """BTC's trailing 5-bar return sits flat, spikes up through +3%
+    (crossing bar fires long), returns to flat, then spikes down through
+    -3% (crossing bar fires short).
+    """
+    dates = pd.date_range("2023-01-01", periods=12, freq="4h")
+    df = pd.DataFrame({
+        'btc_ret_5': [0.0] * 5 + [0.05] + [0.0] * 5 + [-0.05],
+    }, index=dates)
+    entries = btc_lead_lag_entries(df, threshold=0.03)
+    assert entries.iloc[5] == 1
+    assert entries.iloc[11] == -1
+    assert (entries.drop(entries.index[[5, 11]]) == 0).all()
+
+
+def test_btc_lead_lag_entries_no_repeat_while_extreme_persists():
+    dates = pd.date_range("2023-01-01", periods=8, freq="4h")
+    df = pd.DataFrame({'btc_ret_5': [0.0] * 5 + [0.05, 0.06, 0.07]}, index=dates)
+    entries = btc_lead_lag_entries(df, threshold=0.03)
+    assert entries.iloc[5] == 1
+    assert entries.iloc[6] == 0
+    assert entries.iloc[7] == 0
+
+
+def test_btc_lead_lag_entries_uses_custom_column_name():
+    dates = pd.date_range("2023-01-01", periods=6, freq="4h")
+    df = pd.DataFrame({'my_btc_ret': [0.0] * 5 + [0.05]}, index=dates)
+    entries = btc_lead_lag_entries(df, threshold=0.03, btc_ret_col='my_btc_ret')
+    assert entries.iloc[5] == 1

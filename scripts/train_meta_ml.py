@@ -32,7 +32,8 @@ from scripts.train_ml import create_features
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           volatility_breakout_entries, trend_pullback_entries,
                           range_fade_entries, obi_momentum_entries,
-                          funding_extreme_reversion_entries, triple_barrier_labels)
+                          funding_extreme_reversion_entries, obv_divergence_entries,
+                          triple_barrier_labels)
 from src.regime import build_btc_regime, add_alignment_features, REGIME_FEATURE_COLS
 from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
                              precision_threshold_table)
@@ -72,6 +73,9 @@ SIGNAL_BUILDERS = {
     # column (see scripts/download_funding_vision.py and
     # scripts/backtest_funding_reversion.py).
     'funding_reversion': lambda df, lookback: funding_extreme_reversion_entries(df, lookback=lookback),
+    # This asset's own volume flow vs. its own price -- needs only the
+    # standard 'close'/'volume' OHLCV columns, no extra data source.
+    'obv_divergence': lambda df, lookback: obv_divergence_entries(df, lookback=lookback),
 }
 
 
