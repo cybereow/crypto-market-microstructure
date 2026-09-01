@@ -192,6 +192,15 @@ python scripts/backtest_llm_gate.py \
   --limit 300
 ```
 
+Two levers for the gate's actual economics, both reused from methodology
+this repo already validated rather than new dial-turning: `--min-confidence`
+trades fewer, higher-confidence setups (same precision/threshold idea as
+`src/calibration.py`'s traditional-ML gate), and every run also reports a
+realistic maker-fill execution check on the approved subset
+(`src.execution.simulate_maker_fills`, section 9's OHLC queue simulation)
+alongside the instant-fill-at-close figures — the same lever that took the
+raw signal from net-negative to net-significant in sections 8→9.
+
 ## Testing
 
 ```bash

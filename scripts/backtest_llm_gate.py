@@ -15,6 +15,24 @@ approved subset's net expectancy distinguishable from zero?) -- the exact
 tools README section 7 used to retract the traditional-ML meta-labeling
 gate once a stricter test was applied. An LLM gate gets no free pass here.
 
+Two levers this script exposes for actually improving the gate's economics,
+both reusing methodology this repo already validated rather than inventing
+a new one to chase a number:
+
+  - `--min-confidence`: the LLM returns a 0-1 confidence with every
+    decision (`src/llm_decision.py`); requiring a higher one before
+    counting a candidate as approved trades fewer, hopefully better,
+    setups -- the same precision/threshold tradeoff `src/calibration.py`
+    already applies to the traditional-ML gate.
+  - Realistic maker-fill execution on the approved subset
+    (`src.execution.simulate_maker_fills` / `triple_barrier_from_fill`,
+    same OPTIMISTIC-upper-bound OHLC queue simulation as README section 9):
+    the instant-fill "MAKER cost" figure below only swaps the cost
+    assumption on trades entered at the signal close, which overstates
+    what's actually reachable. This is the same lever that took the raw
+    signal from net-negative to net-significant in section 8->9 -- so it's
+    applied here too, on however many candidates the gate actually approves.
+
 Unlike every other backtest script in this repo, this one costs real money
 and real wall-clock time: one live API call per candidate, not a vectorized
 replay. Decisions are cached to `data/<--cache>` (default
@@ -37,9 +55,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
 from src.labeling import volatility_breakout_entries, triple_barrier_labels
+from src.execution import simulate_maker_fills, triple_barrier_from_fill
 from src.metrics import net_pf_expectancy
 from src.significance import permutation_test, bootstrap_mean_pvalue
-from src.paper_trading import LOOKBACK, PT_MULT, SL_MULT, MAX_HOLDING_BARS
+from src.paper_trading import (LOOKBACK, PT_MULT, SL_MULT, MAX_HOLDING_BARS,
+                               OFFSET_MULT, QUEUE_TIMEOUT_BARS)
 from src.llm_decision import FEATURE_KEYS, get_llm_decision
 
 MODEL = 'claude-sonnet-5'
@@ -66,13 +86,20 @@ def gather_candidates(data_files: list) -> tuple:
     SL_MULT/MAX_HOLDING_BARS), so a backtest result here is directly
     comparable to what the live gate would have logged.
 
-    Returns (market_df, features_by_key): a pooled DataFrame indexed by
-    signal_time with an 'asset' column, side/label/ret/signal_price/atr;
-    and a dict mapping (asset, signal_time) -> the FEATURE_KEYS snapshot
-    handed to the LLM.
+    Returns (market_df, features_by_key, per_asset):
+      - market_df: a pooled DataFrame indexed by signal_time with an
+        'asset' column, side/label/ret/signal_price/atr (instant-fill
+        basis)
+      - features_by_key: dict mapping (asset, signal_time) -> the
+        FEATURE_KEYS snapshot handed to the LLM
+      - per_asset: dict mapping asset -> {df_features, raw_atr, entries},
+        kept around so the approved subset can later be re-run through
+        `src.execution.simulate_maker_fills` for a realistic (not
+        instant-fill) execution check
     """
     frames = []
     features_by_key = {}
+    per_asset = {}
     for data_file in data_files:
         path = os.path.join(OUTPUT_DIR, data_file)
         if not os.path.exists(path):
@@ -93,6 +120,7 @@ def gather_candidates(data_files: list) -> tuple:
         market['signal_price'] = df_features.loc[market.index, 'close'].to_numpy()
         market['atr'] = raw_atr.loc[market.index].to_numpy()
         frames.append(market)
+        per_asset[data_file] = {'df_features': df_features, 'raw_atr': raw_atr, 'entries': entries}
 
         for ts in market.index:
             row = df_features.loc[ts]
@@ -103,8 +131,66 @@ def gather_candidates(data_files: list) -> tuple:
         print(f"  {data_file}: {len(market)} candidates")
 
     if not frames:
-        return pd.DataFrame(), {}
-    return pd.concat(frames), features_by_key
+        return pd.DataFrame(), {}, {}
+    return pd.concat(frames), features_by_key, per_asset
+
+
+def maker_fill_economics(approved: pd.DataFrame, per_asset: dict, maker_cost: float) -> dict:
+    """Re-simulate REALISTIC maker-order execution (src.execution's
+    OHLC-only queue simulation, README section 9) restricted to just the
+    candidates the LLM gate approved, instead of the instant-fill-at-close
+    assumption `triple_barrier_labels` uses. Per asset: zero out every
+    non-approved candle's entry so `simulate_maker_fills` only ever prices
+    a resting limit at the gate's own approved signals, then re-label only
+    the ones that actually filled from their real fill bar/price.
+
+    Returns a dict with fill_rate, n_filled, win_rate, pf, expectancy,
+    and a bootstrap p-value on the filled subset's net returns -- or
+    n_filled=0 / NaNs if nothing in `approved` filled (or nothing was
+    approved at all).
+    """
+    fills_frames, maker_frames = [], []
+    for asset, group in approved.groupby('asset'):
+        data = per_asset.get(asset)
+        if data is None:
+            continue
+        approved_times = set(group.index)
+        gated_entries = pd.Series(0, index=data['entries'].index, dtype=data['entries'].dtype)
+        mask = gated_entries.index.isin(approved_times)
+        gated_entries.loc[mask] = data['entries'].loc[mask]
+
+        fills = simulate_maker_fills(data['df_features'], gated_entries, data['raw_atr'],
+                                     offset_mult=OFFSET_MULT, queue_timeout=QUEUE_TIMEOUT_BARS)
+        maker = triple_barrier_from_fill(data['df_features'], fills, data['raw_atr'],
+                                         pt_mult=PT_MULT, sl_mult=SL_MULT,
+                                         max_holding=MAX_HOLDING_BARS)
+        if len(fills):
+            fills_frames.append(fills)
+        if len(maker):
+            maker_frames.append(maker)
+
+    n_candidates = len(approved)
+    if not fills_frames:
+        return {'n_candidates': n_candidates, 'n_filled': 0, 'fill_rate': float('nan'),
+               'win_rate': float('nan'), 'pf': float('nan'), 'expectancy': float('nan'),
+               'p_value': float('nan')}
+
+    fills_df = pd.concat(fills_frames)
+    fill_rate = float(fills_df['filled'].mean()) if len(fills_df) else float('nan')
+
+    if not maker_frames:
+        return {'n_candidates': n_candidates, 'n_filled': 0, 'fill_rate': fill_rate,
+               'win_rate': float('nan'), 'pf': float('nan'), 'expectancy': float('nan'),
+               'p_value': float('nan')}
+
+    maker_df = pd.concat(maker_frames)
+    rets = maker_df['ret'].to_numpy()
+    pf, expectancy = net_pf_expectancy(rets, maker_cost)
+    win_rate = float((maker_df['label'] == 1).mean())
+    p_value = bootstrap_mean_pvalue(rets - maker_cost)
+
+    return {'n_candidates': n_candidates, 'n_filled': len(maker_df), 'fill_rate': fill_rate,
+            'win_rate': win_rate, 'pf': pf, 'expectancy': expectancy, 'p_value': p_value}
 
 
 def main():
@@ -120,6 +206,11 @@ def main():
                               "(asset, signal_time), so a re-run never re-pays for an "
                               "already-decided candidate.")
     parser.add_argument("--flush-every", type=int, default=20)
+    parser.add_argument("--min-confidence", type=float, default=0.0,
+                         help="Only count an 'approve' decision as approved if the LLM's "
+                              "reported confidence is >= this (0-1). Raising it trades fewer, "
+                              "hopefully higher-quality, setups -- same precision/threshold "
+                              "tradeoff as src/calibration.py's traditional-ML gate.")
     args = parser.parse_args()
 
     api_key = os.environ.get('ANTHROPIC_API_KEY')
@@ -130,7 +221,7 @@ def main():
     client = anthropic.Anthropic(api_key=api_key)
 
     print(f"Gathering vol_breakout candidates from {len(args.data)} file(s)...")
-    market, features_by_key = gather_candidates(args.data)
+    market, features_by_key, per_asset = gather_candidates(args.data)
     if market.empty:
         print("No candidates found.")
         return
@@ -171,23 +262,27 @@ def main():
     print(f"\n{calls_made} new LLM calls made this run; {len(cache)} decisions cached in total.")
 
     decision_map = dict(zip(zip(cache['asset'], cache['signal_time']), cache['decision']))
+    confidence_map = dict(zip(zip(cache['asset'], cache['signal_time']), cache['confidence']))
     market = market.copy()
     market['key'] = list(zip(market['asset'], market.index))
     market['llm_decision'] = market['key'].map(decision_map)
+    market['llm_confidence'] = market['key'].map(confidence_map)
 
     decided = market[market['llm_decision'].notna()]
     if decided.empty:
         print("No decisions available yet -- increase --limit or re-run.")
         return
 
-    approved_mask = (decided['llm_decision'] == 'approve').to_numpy()
+    approved_mask = ((decided['llm_decision'] == 'approve') &
+                     (decided['llm_confidence'] >= args.min_confidence)).to_numpy()
     labels = decided['label'].to_numpy()
     rets = decided['ret'].to_numpy()
     n, n_approved = len(decided), int(approved_mask.sum())
 
     print(f"\n{'=' * 78}")
     print(f"  LLM gate results on {n} decided candidates "
-          f"({n_approved} approved, {n - n_approved} rejected)")
+          f"({n_approved} approved at confidence >= {args.min_confidence:.2f}, "
+          f"{n - n_approved} rejected)")
     print(f"{'=' * 78}")
 
     net_rets_maker = rets - 0.0008
@@ -218,6 +313,25 @@ def main():
     else:
         print("\n  Degenerate selection (gate approved everything or nothing this run) -- "
               "permutation test skipped.")
+
+    print(f"\n{'=' * 78}")
+    print("  Realistic maker-fill execution on the APPROVED subset only (README section 9's "
+          "OHLC-only queue simulation, an OPTIMISTIC upper bound -- not the instant-fill-at-"
+          "close basis the table above uses)")
+    print(f"{'=' * 78}")
+    if n_approved > 0:
+        mf = maker_fill_economics(decided[approved_mask], per_asset, maker_cost=0.0008)
+        if mf['n_filled'] > 0:
+            print(f"  fill rate: {mf['fill_rate']:.1%}  ({mf['n_filled']}/{mf['n_candidates']} "
+                  f"approved candidates filled within {QUEUE_TIMEOUT_BARS} bars)")
+            print(f"  MAKER cost 0.08% -- FILLED: n={mf['n_filled']:4d}  win rate "
+                  f"{mf['win_rate']:.1%}  PF {mf['pf']:.2f}  exp/trade {mf['expectancy']:+.4%}  "
+                  f"bootstrap p={mf['p_value']:.4f}")
+        else:
+            print("  none of the approved candidates would have filled within "
+                  f"{QUEUE_TIMEOUT_BARS} bars in this simulation.")
+    else:
+        print("  no approved candidates to simulate.")
 
     out_path = os.path.join(OUTPUT_DIR, 'llm_gate_backtest_results.csv')
     decided.drop(columns=['key']).to_csv(out_path)
