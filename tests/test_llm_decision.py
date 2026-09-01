@@ -1,6 +1,7 @@
 import pytest
 
-from src.llm_decision import build_decision_prompt, parse_decision, get_llm_decision
+from src.llm_decision import (build_decision_prompt, parse_decision, get_llm_decision,
+                              SIGNAL_DESCRIPTIONS)
 
 
 FEATURES = {
@@ -29,6 +30,32 @@ def test_build_decision_prompt_skips_missing_features():
     prompt = build_decision_prompt('SOL/USDT', 1, 150.0, 3.0, features)
     assert 'RSI_14' not in prompt
     assert 'RSI_70' in prompt
+
+
+def test_build_decision_prompt_defaults_to_vol_breakout_description():
+    prompt = build_decision_prompt('BTC/USDT', 1, 65000.0, 800.0, FEATURES)
+    assert SIGNAL_DESCRIPTIONS['vol_breakout'] in prompt
+
+
+def test_build_decision_prompt_describes_the_named_signal():
+    prompt = build_decision_prompt('BTC/USDT', 1, 65000.0, 800.0, FEATURES,
+                                   signal_name='funding_reversion')
+    assert SIGNAL_DESCRIPTIONS['funding_reversion'] in prompt
+    assert SIGNAL_DESCRIPTIONS['vol_breakout'] not in prompt
+
+
+def test_build_decision_prompt_falls_back_to_raw_key_for_unknown_signal():
+    prompt = build_decision_prompt('BTC/USDT', 1, 65000.0, 800.0, FEATURES,
+                                   signal_name='some_new_signal')
+    assert 'some_new_signal' in prompt
+
+
+def test_build_decision_prompt_includes_funding_features_when_present():
+    features = dict(FEATURES)
+    features['funding_rate'] = 0.015
+    prompt = build_decision_prompt('BTC/USDT', -1, 65000.0, 800.0, features,
+                                   signal_name='funding_reversion')
+    assert 'funding_rate: 0.015' in prompt
 
 
 def test_parse_decision_valid_json():
@@ -165,3 +192,12 @@ def test_get_llm_decision_defaults_max_tokens_generously():
         '{"decision": "approve", "confidence": 0.5, "reason": "x"}'))
     get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES)
     assert client.messages.last_kwargs['max_tokens'] >= 1024
+
+
+def test_get_llm_decision_passes_signal_name_into_the_actual_prompt_sent():
+    client = _FakeClient(response=_text_response(
+        '{"decision": "approve", "confidence": 0.5, "reason": "x"}'))
+    get_llm_decision(client, 'claude-sonnet-5', 'BTC/USDT', 1, 65000.0, 800.0, FEATURES,
+                     signal_name='funding_reversion')
+    sent_prompt = client.messages.last_kwargs['messages'][0]['content']
+    assert SIGNAL_DESCRIPTIONS['funding_reversion'] in sent_prompt

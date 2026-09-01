@@ -1,10 +1,12 @@
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
 import scripts.backtest_llm_gate as backtest_llm_gate
-from scripts.backtest_llm_gate import load_cache, save_cache, CACHE_COLUMNS, maker_fill_economics
+from scripts.backtest_llm_gate import (load_cache, save_cache, CACHE_COLUMNS,
+                                       maker_fill_economics, gather_candidates)
 
 
 def test_load_cache_missing_file_returns_empty_frame(tmp_path):
@@ -67,13 +69,14 @@ def _patch_common(monkeypatch, tmp_path, argv):
     monkeypatch.setattr(backtest_llm_gate, "OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(backtest_llm_gate.anthropic, "Anthropic",
                         lambda api_key, base_url=None: object())
-    monkeypatch.setattr(backtest_llm_gate, "gather_candidates", lambda data_files: _fake_market())
+    monkeypatch.setattr(backtest_llm_gate, "gather_candidates",
+                        lambda data_files, **kwargs: _fake_market())
 
 
 def test_main_caches_decisions_and_writes_results(monkeypatch, tmp_path, capsys):
     _patch_common(monkeypatch, tmp_path, ["backtest_llm_gate.py", "--data", "x.csv"])
 
-    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
+    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024, signal_name=None):
         # Approve longs, reject shorts -- a clean, testable split.
         decision = 'approve' if side > 0 else 'reject'
         return {'decision': decision, 'confidence': 0.75, 'reason': f'side={side}'}
@@ -100,7 +103,7 @@ def test_main_idempotent_does_not_recall_llm_for_cached_candidates(monkeypatch, 
 
     call_count = {'n': 0}
 
-    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
+    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024, signal_name=None):
         call_count['n'] += 1
         return {'decision': 'approve', 'confidence': 0.9, 'reason': 'ok'}
     monkeypatch.setattr(backtest_llm_gate, "get_llm_decision", counting_decision)
@@ -116,7 +119,7 @@ def test_main_respects_limit(monkeypatch, tmp_path):
 
     call_count = {'n': 0}
 
-    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
+    def counting_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024, signal_name=None):
         call_count['n'] += 1
         return {'decision': 'approve', 'confidence': 0.9, 'reason': 'ok'}
     monkeypatch.setattr(backtest_llm_gate, "get_llm_decision", counting_decision)
@@ -141,7 +144,7 @@ def test_main_min_confidence_filters_low_confidence_approvals(monkeypatch, tmp_p
                   ["backtest_llm_gate.py", "--data", "x.csv", "--min-confidence", "0.7"])
 
     # side=1 candidates get high confidence, side=-1 get low confidence -- both 'approve'.
-    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024):
+    def fake_get_llm_decision(client, model, asset, side, signal_price, atr, features, max_tokens=1024, signal_name=None):
         confidence = 0.9 if side > 0 else 0.3
         return {'decision': 'approve', 'confidence': confidence, 'reason': 'x'}
     monkeypatch.setattr(backtest_llm_gate, "get_llm_decision", fake_get_llm_decision)
@@ -168,3 +171,48 @@ def test_maker_fill_economics_runs_against_synthetic_history():
 
     assert result['n_candidates'] == 2
     assert 0.0 <= result['fill_rate'] <= 1.0
+
+
+def test_gather_candidates_raises_on_mismatched_funding_data_length():
+    with pytest.raises(ValueError):
+        gather_candidates(['a.csv', 'b.csv'], signal='funding_reversion',
+                          funding_data_files=['only_one.csv'])
+
+
+def _write_funding_reversion_fixture(tmp_path):
+    """80 bars of near-flat OHLCV with one funding-rate spike at bar 75 --
+    enough history for create_features' longest rolling window (50-bar
+    SMA) to warm up before the spike, and enough for a short --lookback
+    quantile window to treat the spike as extreme.
+    """
+    n = 80
+    idx = pd.date_range('2024-01-01', periods=n, freq='4h')
+    close = pd.Series(100.0 + np.linspace(0, 1, n), index=idx)
+    ohlcv = pd.DataFrame({
+        'open': close, 'high': close + 0.5, 'low': close - 0.5, 'close': close,
+        'volume': 100.0,
+    }, index=idx)
+    funding = pd.Series(0.0001, index=idx)
+    funding.iloc[75] = 0.05  # extreme positive -> fade with a short
+    funding_df = pd.DataFrame({'funding_rate': funding}, index=idx)
+
+    data_path = tmp_path / "asset.csv"
+    funding_path = tmp_path / "funding.csv"
+    ohlcv.to_csv(data_path, index_label='timestamp')
+    funding_df.to_csv(funding_path, index_label='timestamp')
+    return data_path.name, funding_path.name
+
+
+def test_gather_candidates_joins_funding_data_and_finds_a_candidate(monkeypatch, tmp_path):
+    monkeypatch.setattr(backtest_llm_gate, "OUTPUT_DIR", str(tmp_path))
+    data_file, funding_file = _write_funding_reversion_fixture(tmp_path)
+
+    market, features_by_key, per_asset = gather_candidates(
+        [data_file], signal='funding_reversion', lookback=5,
+        funding_data_files=[funding_file])
+
+    assert not market.empty
+    assert (market['side'] == -1).any()  # extreme positive funding -> fade short
+    key = (data_file, market.index[0])
+    assert key in features_by_key
+    assert features_by_key[key]['funding_rate'] is not None

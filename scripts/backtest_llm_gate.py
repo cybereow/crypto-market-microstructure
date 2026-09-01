@@ -1,14 +1,17 @@
-"""Historical backtest of the LLM (Claude) approval gate on `vol_breakout`
-candidates, using already-downloaded 4h OHLCV history instead of waiting
-weeks for `scripts/paper_test_llm.py`'s live shadow trader to accumulate a
-sample (this signal is rare -- see README section 12).
+"""Historical backtest of the LLM (Claude) approval gate on ANY primary
+signal's candidates (`--signal`, from `SIGNAL_BUILDERS` in
+scripts/train_meta_ml.py -- vol_breakout, funding_reversion, etc.), using
+already-downloaded 4h OHLCV history instead of waiting weeks for
+`scripts/paper_test_llm.py`'s live shadow trader to accumulate a sample.
 
 For every historical candidate, the SAME `src.llm_decision.get_llm_decision`
 call used live is made against the indicator snapshot AT THAT SIGNAL BAR
 (no lookahead -- `create_features` is rolling/shift-based, so nothing after
-the signal bar leaks in). The gate's economics are then compared against
-the ungated candidate pool -- and held to the SAME statistical bar as
-every other selection in this repo, not a lesser one:
+the signal bar leaks in), told which signal it's gating so the prompt
+states that signal's own premise rather than a generic breakout framing
+(see `src.llm_decision.SIGNAL_DESCRIPTIONS`). The gate's economics are
+then compared against the ungated candidate pool -- and held to the SAME
+statistical bar as every other selection in this repo, not a lesser one:
 `src.significance.permutation_test` (is the LLM's selection distinguishable
 from a random same-size draw?) and `bootstrap_mean_pvalue` (is the
 approved subset's net expectancy distinguishable from zero?) -- the exact
@@ -33,14 +36,22 @@ a new one to chase a number:
     signal from net-negative to net-significant in section 8->9 -- so it's
     applied here too, on however many candidates the gate actually approves.
 
+`--pt-mult`/`--sl-mult`/`--lookback`/`--max-holding` default to
+vol_breakout's own tuned geometry (2.0/1.0/20/18, matching
+src/paper_trading.py's live constants). A different signal generally
+wants different geometry -- e.g. funding_reversion is a symmetric
+reversion play tested at 2.0/2.0 with a 90-bar lookback in
+scripts/backtest_funding_reversion.py (README section 14); pass the same
+values here with `--signal funding_reversion --funding-data ...` for a
+directly comparable gated run.
+
 Unlike every other backtest script in this repo, this one costs real money
 and real wall-clock time: one live API call per candidate, not a vectorized
 replay. Decisions are cached to `data/<--cache>` (default
 llm_gate_backtest_cache.csv), keyed by (asset, signal_time), and flushed
 every `--flush-every` calls, so an interrupted run or a re-run never
 re-pays for an already-decided candidate. Use `--limit` to cap spend on a
-first run (start small: a few hundred candidates for BTC/ETH/SOL on a
-year or two of 4h data is a reasonable first sample).
+first run.
 
 Needs ANTHROPIC_API_KEY in the environment.
 """
@@ -54,12 +65,11 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
-from src.labeling import volatility_breakout_entries, triple_barrier_labels
+from scripts.train_meta_ml import SIGNAL_BUILDERS
+from src.labeling import triple_barrier_labels
 from src.execution import simulate_maker_fills, triple_barrier_from_fill
 from src.metrics import net_pf_expectancy
 from src.significance import permutation_test, bootstrap_mean_pvalue
-from src.paper_trading import (LOOKBACK, PT_MULT, SL_MULT, MAX_HOLDING_BARS,
-                               OFFSET_MULT, QUEUE_TIMEOUT_BARS)
 from src.llm_decision import FEATURE_KEYS, get_llm_decision
 
 MODEL = 'claude-sonnet-5'
@@ -79,12 +89,17 @@ def save_cache(df: pd.DataFrame, path: str):
     df.to_csv(path, index=False)
 
 
-def gather_candidates(data_files: list) -> tuple:
-    """Detect vol_breakout candidates on each asset's already-downloaded
-    history and label them with the SAME triple-barrier geometry
-    scripts/paper_test_llm.py uses live (src.paper_trading's PT_MULT/
-    SL_MULT/MAX_HOLDING_BARS), so a backtest result here is directly
-    comparable to what the live gate would have logged.
+def gather_candidates(data_files: list, signal: str = 'vol_breakout', lookback: int = 20,
+                       pt_mult: float = 2.0, sl_mult: float = 1.0, max_holding: int = 18,
+                       funding_data_files: list = None) -> tuple:
+    """Detect `signal`'s candidates on each asset's already-downloaded
+    history and label them with the given triple-barrier geometry.
+
+    `funding_data_files`, if given, must be the same length as
+    `data_files` and in the same order (one funding-rate file per asset,
+    like scripts/backtest_funding_reversion.py) -- required when
+    `signal='funding_reversion'`, which needs a 'funding_rate' column
+    joined in before feature-building.
 
     Returns (market_df, features_by_key, per_asset):
       - market_df: a pooled DataFrame indexed by signal_time with an
@@ -97,21 +112,36 @@ def gather_candidates(data_files: list) -> tuple:
         `src.execution.simulate_maker_fills` for a realistic (not
         instant-fill) execution check
     """
+    if funding_data_files is not None and len(funding_data_files) != len(data_files):
+        raise ValueError(
+            f"--funding-data has {len(funding_data_files)} file(s) but --data has "
+            f"{len(data_files)} -- need exactly one funding file per asset, in the same order.")
+
     frames = []
     features_by_key = {}
     per_asset = {}
-    for data_file in data_files:
+    for i, data_file in enumerate(data_files):
         path = os.path.join(OUTPUT_DIR, data_file)
         if not os.path.exists(path):
             print(f"  {data_file}: not found, skipping.")
             continue
         df = pd.read_csv(path, index_col='timestamp', parse_dates=True)
+
+        if funding_data_files is not None:
+            funding_path = os.path.join(OUTPUT_DIR, funding_data_files[i])
+            if not os.path.exists(funding_path):
+                print(f"  {funding_data_files[i]}: not found, skipping {data_file}.")
+                continue
+            funding_df = pd.read_csv(funding_path, index_col='timestamp', parse_dates=True)
+            df = df.join(funding_df[['funding_rate']], how='left')
+            df['funding_rate'] = df['funding_rate'].ffill()
+
         df_features = create_features(df)
         raw_atr = df_features['ATR_14'] * df_features['close']
-        entries = volatility_breakout_entries(df_features, lookback=LOOKBACK)
+        entries = SIGNAL_BUILDERS[signal](df_features, lookback)
 
-        market = triple_barrier_labels(df_features, entries, raw_atr, pt_mult=PT_MULT,
-                                        sl_mult=SL_MULT, max_holding=MAX_HOLDING_BARS)
+        market = triple_barrier_labels(df_features, entries, raw_atr, pt_mult=pt_mult,
+                                        sl_mult=sl_mult, max_holding=max_holding)
         if market.empty:
             print(f"  {data_file}: no candidates, skipping.")
             continue
@@ -135,7 +165,10 @@ def gather_candidates(data_files: list) -> tuple:
     return pd.concat(frames), features_by_key, per_asset
 
 
-def maker_fill_economics(approved: pd.DataFrame, per_asset: dict, maker_cost: float) -> dict:
+def maker_fill_economics(approved: pd.DataFrame, per_asset: dict, maker_cost: float,
+                          offset_mult: float = 0.15, queue_timeout: int = 3,
+                          pt_mult: float = 2.0, sl_mult: float = 1.0,
+                          max_holding: int = 18) -> dict:
     """Re-simulate REALISTIC maker-order execution (src.execution's
     OHLC-only queue simulation, README section 9) restricted to just the
     candidates the LLM gate approved, instead of the instant-fill-at-close
@@ -160,10 +193,10 @@ def maker_fill_economics(approved: pd.DataFrame, per_asset: dict, maker_cost: fl
         gated_entries.loc[mask] = data['entries'].loc[mask]
 
         fills = simulate_maker_fills(data['df_features'], gated_entries, data['raw_atr'],
-                                     offset_mult=OFFSET_MULT, queue_timeout=QUEUE_TIMEOUT_BARS)
+                                     offset_mult=offset_mult, queue_timeout=queue_timeout)
         maker = triple_barrier_from_fill(data['df_features'], fills, data['raw_atr'],
-                                         pt_mult=PT_MULT, sl_mult=SL_MULT,
-                                         max_holding=MAX_HOLDING_BARS)
+                                         pt_mult=pt_mult, sl_mult=sl_mult,
+                                         max_holding=max_holding)
         if len(fills):
             fills_frames.append(fills)
         if len(maker):
@@ -195,37 +228,60 @@ def maker_fill_economics(approved: pd.DataFrame, per_asset: dict, maker_cost: fl
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Historical backtest of the Claude approval gate on vol_breakout candidates.")
+        description="Historical backtest of the Claude approval gate on a primary signal's candidates.")
     parser.add_argument("--data", type=str, nargs='+', required=True)
+    parser.add_argument("--signal", type=str, default="vol_breakout",
+                        choices=list(SIGNAL_BUILDERS.keys()),
+                        help="Which src/labeling.py primary signal to gate. "
+                             "'funding_reversion' requires --funding-data.")
+    parser.add_argument("--funding-data", type=str, nargs='+', default=None,
+                        help="One funding-rate file per --data file, in the SAME order "
+                             "(download_funding_vision.py). Required for "
+                             "--signal funding_reversion.")
+    parser.add_argument("--lookback", type=int, default=20)
+    parser.add_argument("--pt-mult", type=float, default=2.0)
+    parser.add_argument("--sl-mult", type=float, default=1.0)
+    parser.add_argument("--max-holding", type=int, default=18)
+    parser.add_argument("--offset-mult", type=float, default=0.15,
+                        help="How much better than the signal price the resting maker limit "
+                             "is priced, in ATR multiples (used by the realistic maker-fill "
+                             "check).")
+    parser.add_argument("--queue-timeout", type=int, default=3,
+                        help="Bars the resting limit order stays before being cancelled.")
     parser.add_argument("--model", type=str, default=os.environ.get('ANTHROPIC_MODEL', MODEL),
-                         help="Claude model ID to call, e.g. claude-sonnet-5, "
-                              "claude-opus-5, claude-haiku-4-5-20251001. Defaults to the "
-                              "ANTHROPIC_MODEL env var if set, else claude-sonnet-5.")
+                        help="Claude model ID to call, e.g. claude-sonnet-5, "
+                             "claude-opus-5, claude-haiku-4-5-20251001. Defaults to the "
+                             "ANTHROPIC_MODEL env var if set, else claude-sonnet-5.")
     parser.add_argument("--base-url", type=str, default=None,
-                         help="Override the Anthropic API endpoint (default: the "
-                              "ANTHROPIC_BASE_URL env var if set, else the real "
-                              "https://api.anthropic.com). Only needed if you're routing "
-                              "through a different Anthropic-compatible gateway/proxy.")
+                        help="Override the Anthropic API endpoint (default: the "
+                             "ANTHROPIC_BASE_URL env var if set, else the real "
+                             "https://api.anthropic.com). Only needed if you're routing "
+                             "through a different Anthropic-compatible gateway/proxy.")
     parser.add_argument("--limit", type=int, default=None,
-                         help="Cap the number of NEW (uncached) LLM calls this run makes. "
-                              "Each call costs real money and real time -- start small.")
+                        help="Cap the number of NEW (uncached) LLM calls this run makes. "
+                             "Each call costs real money and real time -- start small.")
     parser.add_argument("--cache", type=str, default="llm_gate_backtest_cache.csv",
-                         help="Filename under data/ where decisions are cached, keyed by "
-                              "(asset, signal_time), so a re-run never re-pays for an "
-                              "already-decided candidate.")
+                        help="Filename under data/ where decisions are cached, keyed by "
+                             "(asset, signal_time), so a re-run never re-pays for an "
+                             "already-decided candidate.")
     parser.add_argument("--flush-every", type=int, default=20)
     parser.add_argument("--min-confidence", type=float, default=0.0,
-                         help="Only count an 'approve' decision as approved if the LLM's "
-                              "reported confidence is >= this (0-1). Raising it trades fewer, "
-                              "hopefully higher-quality, setups -- same precision/threshold "
-                              "tradeoff as src/calibration.py's traditional-ML gate.")
+                        help="Only count an 'approve' decision as approved if the LLM's "
+                             "reported confidence is >= this (0-1). Raising it trades fewer, "
+                             "hopefully higher-quality, setups -- same precision/threshold "
+                             "tradeoff as src/calibration.py's traditional-ML gate.")
     parser.add_argument("--max-tokens", type=int, default=1024,
-                         help="Max output tokens per decision call. Raise this if a "
-                              "thinking-capable model/gateway is burning its whole budget "
-                              "on reasoning and never emitting the JSON answer (shows up as "
-                              "reason='no text in response ... stop_reason=max_tokens' in "
-                              "the cache).")
+                        help="Max output tokens per decision call. Raise this if a "
+                             "thinking-capable model/gateway is burning its whole budget "
+                             "on reasoning and never emitting the JSON answer (shows up as "
+                             "reason='no text in response ... stop_reason=max_tokens' in "
+                             "the cache).")
     args = parser.parse_args()
+
+    if args.signal == 'funding_reversion' and not args.funding_data:
+        raise SystemExit(
+            "--signal funding_reversion requires --funding-data (one funding-rate file per "
+            "--data asset, in the same order).")
 
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
@@ -234,8 +290,10 @@ def main():
             "candidate trade.")
     client = anthropic.Anthropic(api_key=api_key, base_url=args.base_url)
 
-    print(f"Gathering vol_breakout candidates from {len(args.data)} file(s)...")
-    market, features_by_key, per_asset = gather_candidates(args.data)
+    print(f"Gathering {args.signal} candidates from {len(args.data)} file(s)...")
+    market, features_by_key, per_asset = gather_candidates(
+        args.data, signal=args.signal, lookback=args.lookback, pt_mult=args.pt_mult,
+        sl_mult=args.sl_mult, max_holding=args.max_holding, funding_data_files=args.funding_data)
     if market.empty:
         print("No candidates found.")
         return
@@ -257,7 +315,8 @@ def main():
 
         decision = get_llm_decision(client, args.model, row['asset'], int(row['side']),
                                      float(row['signal_price']), float(row['atr']),
-                                     features_by_key[key], max_tokens=args.max_tokens)
+                                     features_by_key[key], max_tokens=args.max_tokens,
+                                     signal_name=args.signal)
         new_rows.append({'asset': row['asset'], 'signal_time': ts,
                           'decision': decision['decision'], 'confidence': decision['confidence'],
                           'reason': decision['reason']})
@@ -294,7 +353,7 @@ def main():
     n, n_approved = len(decided), int(approved_mask.sum())
 
     print(f"\n{'=' * 78}")
-    print(f"  LLM gate results on {n} decided candidates "
+    print(f"  LLM gate results ({args.signal}) on {n} decided candidates "
           f"({n_approved} approved at confidence >= {args.min_confidence:.2f}, "
           f"{n - n_approved} rejected)")
     print(f"{'=' * 78}")
@@ -334,16 +393,19 @@ def main():
           "close basis the table above uses)")
     print(f"{'=' * 78}")
     if n_approved > 0:
-        mf = maker_fill_economics(decided[approved_mask], per_asset, maker_cost=0.0008)
+        mf = maker_fill_economics(decided[approved_mask], per_asset, maker_cost=0.0008,
+                                  offset_mult=args.offset_mult, queue_timeout=args.queue_timeout,
+                                  pt_mult=args.pt_mult, sl_mult=args.sl_mult,
+                                  max_holding=args.max_holding)
         if mf['n_filled'] > 0:
             print(f"  fill rate: {mf['fill_rate']:.1%}  ({mf['n_filled']}/{mf['n_candidates']} "
-                  f"approved candidates filled within {QUEUE_TIMEOUT_BARS} bars)")
+                  f"approved candidates filled within {args.queue_timeout} bars)")
             print(f"  MAKER cost 0.08% -- FILLED: n={mf['n_filled']:4d}  win rate "
                   f"{mf['win_rate']:.1%}  PF {mf['pf']:.2f}  exp/trade {mf['expectancy']:+.4%}  "
                   f"bootstrap p={mf['p_value']:.4f}")
         else:
             print("  none of the approved candidates would have filled within "
-                  f"{QUEUE_TIMEOUT_BARS} bars in this simulation.")
+                  f"{args.queue_timeout} bars in this simulation.")
     else:
         print("  no approved candidates to simulate.")
 

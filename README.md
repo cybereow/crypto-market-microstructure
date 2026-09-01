@@ -265,6 +265,29 @@ realistic maker-fill execution check on the approved subset
 alongside the instant-fill-at-close figures — the same lever that took the
 raw signal from net-negative to net-significant in sections 8→9.
 
+`--signal` is not limited to `vol_breakout` — it gates ANY primary signal
+in `SIGNAL_BUILDERS` (`scripts/train_meta_ml.py`), with the prompt telling
+Claude which signal's own premise to reason about
+(`src.llm_decision.SIGNAL_DESCRIPTIONS`) instead of a generic breakout
+framing. Section 14's funding-reversion signal is the most interesting
+target — it's the only one of sections 14-16 with a positive (if not yet
+significant) point estimate on its own, so it's the best-motivated test
+of whether the gate can push a near-miss over the p<0.05 line rather than
+gating a signal (`vol_breakout`) with roughly zero edge to begin with:
+
+```bash
+python scripts/backtest_llm_gate.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion --lookback 90 --pt-mult 2.0 --sl-mult 2.0 \
+  --model claude-sonnet-5 \
+  --limit 300
+```
+
+(`--lookback`/`--pt-mult`/`--sl-mult` here match section 14's own tuned
+geometry — `--data`/`--funding-data` need the FUTURES klines and funding
+files from step 5 above, not step 1's spot klines.)
+
 ## Testing
 
 ```bash

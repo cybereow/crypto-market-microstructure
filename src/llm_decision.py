@@ -1,7 +1,7 @@
-"""LLM-gated trade confirmation: ask Claude whether a rule-based
-`vol_breakout` candidate (`src.labeling.volatility_breakout_entries`) is
-worth taking, given a structured snapshot of the same indicators
-`scripts/train_ml.create_features` already computes.
+"""LLM-gated trade confirmation: ask Claude whether a rule-based primary
+signal's candidate trade (any signal in `src/labeling.py` -- vol_breakout,
+funding_reversion, etc.) is worth taking, given a structured snapshot of
+the same indicators `scripts/train_ml.create_features` already computes.
 
 Why this exists, and what it is NOT: the rest of this repo's ethos is
 statistical rigor (README, docs/RESEARCH_LOG.md) -- deterministic
@@ -23,33 +23,66 @@ import re
 
 DECISION_SYSTEM_PROMPT = (
     "You are a risk-averse trade-approval gate for a systematic crypto "
-    "trading bot. A rule-based volatility-breakout signal has already "
-    "fired on a closed candle; your only job is to APPROVE or REJECT "
-    "taking it, based on the indicator snapshot given. Be skeptical by "
-    "default -- most candidate trades should be rejected unless the "
-    "snapshot shows clearly favorable, non-conflicting conditions for "
-    "this specific direction. Respond with ONLY a JSON object of the form "
-    '{"decision": "approve"|"reject", "confidence": <0-1 float>, '
-    '"reason": "<one sentence>"}. No other text, no markdown fences.'
+    "trading bot. A rule-based signal has already fired on a closed "
+    "candle; your only job is to APPROVE or REJECT taking it, based on "
+    "the signal description and indicator snapshot given. Reason "
+    "explicitly about whether the available evidence supports THIS "
+    "SPECIFIC direction and THIS SPECIFIC signal's own stated premise "
+    "(e.g. a reversion signal needs evidence of exhaustion/crowding, a "
+    "breakout signal needs evidence of genuine momentum) -- do not apply "
+    "a generic breakout or trend checklist to a signal that isn't one. "
+    "Weigh confirming and conflicting evidence against each other rather "
+    "than pattern-matching a single favorable-looking number, and let "
+    "your confidence reflect how one-sided that balance actually is (a "
+    "close call is NOT a 0.9). Be skeptical by default -- most candidate "
+    "trades should be rejected unless the snapshot shows clearly "
+    "favorable, non-conflicting conditions. Respond with ONLY a JSON "
+    'object of the form {"decision": "approve"|"reject", "confidence": '
+    '<0-1 float>, "reason": "<one sentence citing the specific numbers '
+    'that drove the call>"}. No other text, no markdown fences.'
 )
 
-# Subset of scripts/train_ml.create_features columns relevant to a
-# breakout entry: trend, momentum, volatility regime and mean-reversion
-# context. Kept as an explicit whitelist rather than dumping every
-# feature column so the prompt stays small and each field is one the
-# model can plausibly reason about.
+# Human-readable description of each src/labeling.py signal's own premise,
+# so the prompt states what evidence would actually support (or refute)
+# THIS signal rather than a generic "breakout" framing that only fits
+# some of them. Falls back to the raw signal key if not listed here.
+SIGNAL_DESCRIPTIONS = {
+    'breakout': 'Donchian breakout (trend continuation)',
+    'reversion': 'RSI mean-reversion (fading an oversold/overbought bounce)',
+    'vol_breakout': 'volatility-squeeze breakout (trend continuation out of a low-volatility regime)',
+    'trend_pullback': 'trend-pullback (buying a dip / selling a rip within an established trend)',
+    'range_fade': 'range-fade (mean-reversion at a stable, non-expanding range edge)',
+    'obi_momentum': 'order-book-imbalance momentum (following resting bid/ask pressure)',
+    'funding_reversion': ('funding-rate-extreme mean-reversion (fading crowded, over-leveraged '
+                          'long/short perpetual-futures positioning)'),
+    'obv_divergence': 'volume-divergence fade (a price breakout on-balance volume does not confirm)',
+    'btc_lead_lag': "cross-asset BTC lead-lag (this altcoin catching up to BTC's own recent move)",
+}
+
+# Subset of scripts/train_ml.create_features columns relevant across the
+# signals above: trend, momentum, volatility regime, mean-reversion
+# context, and (when the candidate came from a funding-based signal and
+# the caller joined a 'funding_rate' column before feature-building) the
+# funding-derived columns create_features adds automatically. Kept as an
+# explicit whitelist rather than dumping every feature column so the
+# prompt stays small and each field is one the model can plausibly
+# reason about; a key simply doesn't appear in the prompt when absent
+# (e.g. funding_rate for a non-funding signal), rather than erroring.
 FEATURE_KEYS = (
     'RSI_14', 'RSI_70', 'ATR_ratio', 'bb_width', 'bb_position',
     'close_to_sma20', 'close_to_sma50', 'vol_regime', 'roc_10', 'roc_20',
+    'funding_rate', 'funding_rate_diff', 'funding_sma_5',
 )
 
 
 def build_decision_prompt(asset: str, side: int, signal_price: float, atr: float,
-                           features: dict) -> str:
+                           features: dict, signal_name: str = 'vol_breakout') -> str:
     direction = "LONG" if side > 0 else "SHORT"
+    description = SIGNAL_DESCRIPTIONS.get(signal_name, signal_name)
     lines = [
         f"Asset: {asset}",
-        f"Signal: volatility-breakout {direction} at close {signal_price:.6g}",
+        f"Signal type: {description}",
+        f"Candidate: {direction} at close {signal_price:.6g}",
         f"ATR(14, price units): {atr:.6g}",
     ]
     for key in FEATURE_KEYS:
@@ -57,8 +90,8 @@ def build_decision_prompt(asset: str, side: int, signal_price: float, atr: float
         if value is not None:
             lines.append(f"{key}: {value:.6g}")
     lines.append(
-        "Approve only if the indicators support this specific direction; "
-        "reject on conflicting, ambiguous, or missing evidence."
+        "Approve only if the evidence supports THIS signal's own premise in THIS "
+        "specific direction; reject on conflicting, ambiguous, or missing evidence."
     )
     return "\n".join(lines)
 
@@ -95,7 +128,8 @@ def parse_decision(text: str) -> dict:
 
 
 def get_llm_decision(client, model: str, asset: str, side: int, signal_price: float,
-                      atr: float, features: dict, max_tokens: int = 1024) -> dict:
+                      atr: float, features: dict, max_tokens: int = 1024,
+                      signal_name: str = 'vol_breakout') -> dict:
     """Call the Messages API (works against the real Anthropic API, or any
     Anthropic-Messages-API-compatible gateway/proxy set via base_url) to
     approve/reject one candidate trade. `client` is injected so tests can
@@ -112,7 +146,7 @@ def get_llm_decision(client, model: str, asset: str, side: int, signal_price: fl
     tight budget can be consumed entirely by a model's own reasoning
     before it reaches the answer.
     """
-    prompt = build_decision_prompt(asset, side, signal_price, atr, features)
+    prompt = build_decision_prompt(asset, side, signal_price, atr, features, signal_name=signal_name)
     try:
         response = client.messages.create(
             model=model,
