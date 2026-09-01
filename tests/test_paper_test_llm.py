@@ -60,7 +60,7 @@ def _run_main(monkeypatch, assets, candidates, decisions, state_csv):
     is exercised end to end.
     """
     monkeypatch.setattr(sys, "argv", ["paper_test_llm.py"])
-    monkeypatch.setattr(paper_test_llm, "make_llm_client", lambda: object())
+    monkeypatch.setattr(paper_test_llm, "make_llm_client", lambda base_url=None: object())
     monkeypatch.setattr(paper_test_llm, "make_exchange", lambda: _FakeExchange(100.0))
 
     def fake_detect(exchange, asset, now):
@@ -127,7 +127,7 @@ def test_main_idempotent_does_not_re_ask_llm_for_already_logged_signal(monkeypat
     call_count = {'n': 0}
 
     monkeypatch.setattr(sys, "argv", ["paper_test_llm.py"])
-    monkeypatch.setattr(paper_test_llm, "make_llm_client", lambda: object())
+    monkeypatch.setattr(paper_test_llm, "make_llm_client", lambda base_url=None: object())
     monkeypatch.setattr(paper_test_llm, "make_exchange", lambda: _FakeExchange(100.0))
     monkeypatch.setattr(paper_test_llm, "detect_new_signal",
                          lambda exchange, asset, now: candidates.get(asset, (None, None)))

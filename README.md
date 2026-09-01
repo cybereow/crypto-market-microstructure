@@ -166,11 +166,36 @@ before it's logged as a paper trade — every candidate is recorded either
 way, so the gate's effect can be compared against the ungated run later.
 This is explicitly *not* held to this repo's usual statistical bar (see
 [`src/llm_decision.py`](src/llm_decision.py) for why) — it's a probe, not
-a validated strategy:
+a validated strategy.
+
+Setup, once, in a fresh checkout:
 
 ```bash
-export ANTHROPIC_API_KEY=...
-python scripts/paper_test_llm.py --assets BTC/USDT ETH/USDT SOL/USDT
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt        # includes anthropic
+export ANTHROPIC_API_KEY=sk-ant-...    # the only required credential
+```
+
+`ANTHROPIC_API_KEY` alone is enough to talk to the real Anthropic API —
+no URL needed, the SDK defaults to `https://api.anthropic.com`. Two more
+env vars (or the equivalent CLI flags below) are optional and only matter
+if you're NOT calling Anthropic directly:
+
+```bash
+export ANTHROPIC_BASE_URL=https://your-gateway.example.com   # only if routing
+                                                               # through a proxy/gateway
+                                                               # instead of Anthropic directly
+export ANTHROPIC_MODEL=claude-sonnet-5   # optional; both scripts already
+                                          # default --model to claude-sonnet-5
+```
+
+Run the live shadow paper-trader (safe to put on a schedule, e.g. every
+4h — it's idempotent):
+
+```bash
+python scripts/paper_test_llm.py --assets BTC/USDT ETH/USDT SOL/USDT \
+  --model claude-sonnet-5
+# add --base-url https://your-gateway.example.com only if you set one above
 ```
 
 Waiting weeks for that live signal to fire enough times to say anything is
@@ -180,17 +205,28 @@ historical candidate (costs money and minutes, not weeks), cached to disk
 so a re-run never re-pays for a candidate it already decided, and scored
 against the ungated pool with the same permutation/bootstrap significance
 tests the rest of this repo uses (README section 7's bar, not a lesser
-one):
+one). Exact commands, start to finish:
 
 ```bash
 python scripts/download_klines_vision.py --symbol BTCUSDT --timeframe 4h --start-date 2023-01-01
 python scripts/download_klines_vision.py --symbol ETHUSDT --timeframe 4h --start-date 2023-01-01
 python scripts/download_klines_vision.py --symbol SOLUSDT --timeframe 4h --start-date 2023-01-01
-export ANTHROPIC_API_KEY=...
+
 python scripts/backtest_llm_gate.py \
   --data binance_BTC_USDT_4h.csv binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv \
-  --limit 300
+  --model claude-sonnet-5 \
+  --limit 300 \
+  --min-confidence 0.7
+# add --base-url https://your-gateway.example.com only if you set ANTHROPIC_BASE_URL above
 ```
+
+`--data binance_BTC_USDT_4h.csv ... --start-date 2023-01-01` above gives
+~294 real candidates on BTC/ETH/SOL (checked directly against this
+repo's own downloaded history) — `--limit 300` covers all of them in one
+run; drop `--start-date` to `2020-01-01` (matching step 1) for the full
+history at several times the candidate count and cost. Both `--model` and
+`--base-url` also default sensibly (`claude-sonnet-5`, the real Anthropic
+API) if omitted — pass them only to override.
 
 Two levers for the gate's actual economics, both reused from methodology
 this repo already validated rather than new dial-turning: `--min-confidence`

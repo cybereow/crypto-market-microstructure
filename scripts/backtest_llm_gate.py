@@ -197,7 +197,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Historical backtest of the Claude approval gate on vol_breakout candidates.")
     parser.add_argument("--data", type=str, nargs='+', required=True)
-    parser.add_argument("--model", type=str, default=MODEL)
+    parser.add_argument("--model", type=str, default=os.environ.get('ANTHROPIC_MODEL', MODEL),
+                         help="Claude model ID to call, e.g. claude-sonnet-5, "
+                              "claude-opus-5, claude-haiku-4-5-20251001. Defaults to the "
+                              "ANTHROPIC_MODEL env var if set, else claude-sonnet-5.")
+    parser.add_argument("--base-url", type=str, default=None,
+                         help="Override the Anthropic API endpoint (default: the "
+                              "ANTHROPIC_BASE_URL env var if set, else the real "
+                              "https://api.anthropic.com). Only needed if you're routing "
+                              "through a different Anthropic-compatible gateway/proxy.")
     parser.add_argument("--limit", type=int, default=None,
                          help="Cap the number of NEW (uncached) LLM calls this run makes. "
                               "Each call costs real money and real time -- start small.")
@@ -218,7 +226,7 @@ def main():
         raise SystemExit(
             "ANTHROPIC_API_KEY is not set. This script calls the real Claude API once per "
             "candidate trade.")
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, base_url=args.base_url)
 
     print(f"Gathering vol_breakout candidates from {len(args.data)} file(s)...")
     market, features_by_key, per_asset = gather_candidates(args.data)

@@ -65,7 +65,8 @@ def _patch_common(monkeypatch, tmp_path, argv):
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key-for-test")
     monkeypatch.setattr(backtest_llm_gate, "OUTPUT_DIR", str(tmp_path))
-    monkeypatch.setattr(backtest_llm_gate.anthropic, "Anthropic", lambda api_key: object())
+    monkeypatch.setattr(backtest_llm_gate.anthropic, "Anthropic",
+                        lambda api_key, base_url=None: object())
     monkeypatch.setattr(backtest_llm_gate, "gather_candidates", lambda data_files: _fake_market())
 
 

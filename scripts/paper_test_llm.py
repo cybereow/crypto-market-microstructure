@@ -55,14 +55,21 @@ STATE_PATH = os.path.join(OUTPUT_DIR, 'paper_trades_llm.csv')
 DATETIME_COLS = ['signal_time', 'deadline', 'fill_time', 'vertical_deadline', 'close_time']
 
 
-def make_llm_client() -> anthropic.Anthropic:
+def make_llm_client(base_url: str = None) -> anthropic.Anthropic:
+    """`base_url=None` (the default, i.e. no `--base-url` passed) lets the
+    SDK itself fall back to the `ANTHROPIC_BASE_URL` env var, and then to
+    the real https://api.anthropic.com if that isn't set either -- so
+    plain Anthropic API users need only ANTHROPIC_API_KEY. `--base-url`
+    (or ANTHROPIC_BASE_URL) is only for routing through a different
+    Anthropic-compatible endpoint (an org's own gateway/proxy).
+    """
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
         raise SystemExit(
             "ANTHROPIC_API_KEY is not set. This script calls the real Claude "
             "API to gate candidate trades (no capital is ever risked, but "
             "the API call itself needs a key).")
-    return anthropic.Anthropic(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key, base_url=base_url)
 
 
 def load_state() -> pd.DataFrame:
@@ -124,10 +131,18 @@ def main():
         description="LLM-gated shadow paper-test: vol_breakout candidates need Claude's "
                     "approval before becoming a paper trade.")
     parser.add_argument("--assets", type=str, nargs='+', default=ASSETS)
-    parser.add_argument("--model", type=str, default=MODEL)
+    parser.add_argument("--model", type=str, default=os.environ.get('ANTHROPIC_MODEL', MODEL),
+                         help="Claude model ID to call, e.g. claude-sonnet-5, "
+                              "claude-opus-5, claude-haiku-4-5-20251001. Defaults to the "
+                              "ANTHROPIC_MODEL env var if set, else claude-sonnet-5.")
+    parser.add_argument("--base-url", type=str, default=None,
+                         help="Override the Anthropic API endpoint (default: the "
+                              "ANTHROPIC_BASE_URL env var if set, else the real "
+                              "https://api.anthropic.com). Only needed if you're routing "
+                              "through a different Anthropic-compatible gateway/proxy.")
     args = parser.parse_args()
 
-    client = make_llm_client()
+    client = make_llm_client(base_url=args.base_url)
     exchange = make_exchange()
     state = load_state()
     now = pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None)
