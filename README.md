@@ -84,6 +84,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
+│   ├── backtest_llm_gate.py            # LLM gate backtested against already-downloaded history
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
 │   └── backtest_grid.py                # Grid trading backtest
 ├── src/
@@ -170,6 +171,25 @@ a validated strategy:
 ```bash
 export ANTHROPIC_API_KEY=...
 python scripts/paper_test_llm.py --assets BTC/USDT ETH/USDT SOL/USDT
+```
+
+Waiting weeks for that live signal to fire enough times to say anything is
+slow. `scripts/backtest_llm_gate.py` replays the same gate against
+already-downloaded history in one run instead — one real API call per
+historical candidate (costs money and minutes, not weeks), cached to disk
+so a re-run never re-pays for a candidate it already decided, and scored
+against the ungated pool with the same permutation/bootstrap significance
+tests the rest of this repo uses (README section 7's bar, not a lesser
+one):
+
+```bash
+python scripts/download_klines_vision.py --symbol BTCUSDT --timeframe 4h --start-date 2023-01-01
+python scripts/download_klines_vision.py --symbol ETHUSDT --timeframe 4h --start-date 2023-01-01
+python scripts/download_klines_vision.py --symbol SOLUSDT --timeframe 4h --start-date 2023-01-01
+export ANTHROPIC_API_KEY=...
+python scripts/backtest_llm_gate.py \
+  --data binance_BTC_USDT_4h.csv binance_ETH_USDT_4h.csv binance_SOL_USDT_4h.csv \
+  --limit 300
 ```
 
 ## Testing
