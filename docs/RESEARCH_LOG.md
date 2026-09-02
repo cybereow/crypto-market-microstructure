@@ -931,6 +931,62 @@ python scripts/backtest_funding_reversion.py \
   --signal funding_reversion_confirmed
 ```
 
+### 19. Is section 14's edge one lucky regime, or does it recur? — walk-forward stability check
+
+The pooled full-history p=0.112 (section 14) answers "is the AVERAGE
+distinguishable from zero" but not "is that average one strong stretch of
+calendar time carrying six years of otherwise-flat data." Unlike
+`scripts/backtest_meta_ml_walkforward.py` (which retrains a model per
+fold to prevent train/test leakage), `funding_extreme_reversion_entries`
+is a fixed rule with nothing to fit -- so `scripts/backtest_funding_reversion_walkforward.py`
+does something narrower but still real: split the identical maker-fill
+computation from section 14 into 6 sequential, non-overlapping,
+equal-WIDTH calendar chunks (~1 year each, 2020-2026) and report each
+chunk's economics independently, reusing section 14's own `run_asset` so
+this is a different SLICING of the same numbers, not a different
+computation.
+
+**Result, same three assets, same full history, same maker-fill
+methodology, single a-priori 6-fold split (no sweep):**
+
+| Fold | Period | n | win rate | PF | exp/trade | p |
+|---|---|---|---|---|---|---|
+| 1 | 2020-01 to 2021-02 | 271 | 54.6% | 1.24 | +0.69% | 0.070 |
+| 2 | 2021-02 to 2022-03 | 310 | 54.8% | 1.17 | +0.45% | 0.126 |
+| 3 | 2022-03 to 2023-04 | 348 | 49.4% | 0.80 | **−0.49%** | 0.960 |
+| 4 | 2023-04 to 2024-05 | 346 | 53.8% | 1.06 | +0.09% | 0.344 |
+| 5 | 2024-05 to 2025-06 | 395 | 52.9% | 1.30 | +0.48% | **0.016** |
+| 6 | 2025-06 to 2026-07 | 497 | 49.7% | 0.92 | **−0.13%** | 0.803 |
+
+4 of 6 folds positive net expectancy, 4 of 6 PF > 1.0. **This is not one
+lucky window carrying the pooled average** — the positive folds are two
+separate, non-adjacent stretches (2020-2022 and 2024-2025), one of them
+(fold 5) individually significant on its own (p=0.016) even before any
+pooling. But it is also not a stable, always-on edge: fold 3
+(2022-03 to 2023-04 — the "crypto winter" stretch spanning Terra/Luna,
+3AC, and FTX) and fold 6 (the most recent year) are both net-negative,
+fold 3 clearly so.
+
+**Verdict: mixed but recurring, not resolved either way.** A plausible
+(not yet tested) read: this fade-the-crowd mechanism may need an actual
+crowd to fade against consistently, which a grinding multi-quarter crash
+with cascading forced liquidations (fold 3) or a range-bound,
+low-conviction stretch (fold 6, tentatively) may not provide in the same
+way a clearer bull/consolidation regime does (folds 1, 2, 5). Testing
+that specific hypothesis — conditioning the signal on a regime filter,
+the same idea already applied to `trend_pullback_entries` and
+`range_fade_entries` in this repo — would be a legitimate next single
+a-priori test; running several regime-filter variants until one clears
+p<0.05 would not be (see section 18's closing note on
+`deflated_pvalue`).
+
+```bash
+python scripts/backtest_funding_reversion_walkforward.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion --n-folds 6
+```
+
 ## Project structure
 
 ```
@@ -954,6 +1010,7 @@ trading-bot/
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
 │   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14, §18)
+│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19)
 │   ├── backtest_btc_lead_lag.py       # BTC-lead-lag cross-asset signal backtest (§16)
 │   └── backtest_grid.py               # Grid Trading bot backtest
 ├── src/
