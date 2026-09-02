@@ -70,6 +70,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §18 | Price confirmation (bb_position) added on top of §14's funding signal, single a-priori threshold | **Null** — moved p from 0.112 to 0.310, not closer to significant |
 | §19 | Walk-forward stability check on §14's signal: 6 sequential yearly folds, same maker-fill methodology | **Mixed** — 4/6 folds positive (2 non-adjacent stretches, one p=0.016 alone), 2/6 negative (incl. the 2022 crash) |
 | §20 | Regime-filtering §14's signal off during volatility expansion (reusing `range_fade`'s existing ATR_ratio<1.05 cutoff) — pooled 2020-2026, single a-priori filter | **Significant** — maker PF 1.15, exp +0.26%, p=0.013 (p=0.0385 after deflating for 3 configs tried); walk-forward: 3 of 6 folds individually significant, 2 still negative |
+| §21 | Live shadow paper-test of §20's signal against real Kraken Futures quotes, zero capital at risk | Ongoing (signal is not frequent; needs weeks of data) |
 
 ## Project layout
 
@@ -93,6 +94,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19, §20)
 │   ├── backtest_btc_lead_lag.py        # BTC-lead-lag cross-asset signal backtest (§16)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
+│   ├── paper_test_funding_live.py      # Same, for the regime-filtered funding signal (§14, §20, §21)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
 │   ├── backtest_llm_gate.py            # LLM gate backtested against already-downloaded history
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
@@ -101,7 +103,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
 │   ├── execution.py      # Maker-order queue fill simulation (§9)
 │   ├── market_making.py  # Two-sided quote/fill/inventory simulator with skew (§13)
-│   ├── paper_trading.py  # Live shadow paper-trading state machine (§12)
+│   ├── paper_trading.py  # Live shadow paper-trading state machine (§12, §21)
 │   ├── llm_decision.py   # LLM (Claude) approve/reject gate for paper_test_llm.py
 │   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
 │   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
@@ -109,7 +111,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log, §1-20
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-21
 ```
 
 ## Setup
@@ -311,6 +313,25 @@ python scripts/backtest_llm_gate.py \
 (`--lookback`/`--pt-mult`/`--sl-mult` here match section 14's own tuned
 geometry — `--data`/`--funding-data` need the FUTURES klines and funding
 files from step 5 above, not step 1's spot klines.)
+
+**7. Live shadow paper-test of the strongest result (§20, no capital at
+risk):** same `paper_test_live.py` pattern as step 4's live paper-trader
+(poll real quotes, price a resting maker limit, zero capital ever at
+risk), applied to `funding_reversion_regime_filtered` (§20's
+significant, if still OPTIMISTIC-upper-bound, result) instead of
+`vol_breakout`. Venue is Kraken Futures — same Binance-451 reason as
+elsewhere in this README, disclosed on two axes here (price AND
+funding-rate scale both differ from the Binance data sections 14-20
+were backtested on; see §21 for the full disclosure):
+
+```bash
+python scripts/paper_test_funding_live.py --assets BTC/USD:USD ETH/USD:USD SOL/USD:USD
+```
+
+Safe to run repeatedly or on a schedule — state lives in
+`data/paper_trades_funding.csv`, independent of step 6's
+`data/paper_trades.csv`. Like the live vol_breakout check, this needs
+weeks to accumulate a meaningful sample; §21 has the full picture.
 
 ## Testing
 

@@ -1064,6 +1064,60 @@ python scripts/backtest_funding_reversion_walkforward.py \
   --signal funding_reversion_regime_filtered --n-folds 6
 ```
 
+### 21. Live shadow paper-test for the regime-filtered funding signal — collecting samples
+
+Section 20's exact next step, named there and built here:
+`scripts/paper_test_funding_live.py` is section 12's live-shadow pattern
+(poll real quotes, price a resting maker limit exactly like
+`src.execution.simulate_maker_fills`, zero capital ever at risk, no order
+ever sent) applied to `funding_reversion_regime_filtered_entries` instead
+of `vol_breakout`.
+
+Venue is Kraken Futures (`ccxt.krakenfutures`), for the same reason
+`paper_test_live.py` uses Kraken instead of Binance (Binance's futures
+API returns HTTP 451 from this environment's network egress — confirmed
+directly against `fapi.binance.com`, while `ccxt.krakenfutures` reached
+both `fetch_ohlcv` and `fetch_funding_rate_history` without issue).
+Disclosed, not silent, on TWO axes here rather than one: Kraken prices
+track Binance's closely but not exactly (already the case for
+`paper_test_live.py`), AND Kraken accrues funding roughly hourly at a
+much smaller per-observation magnitude than Binance's nominal 8h rate —
+confirmed directly (~1e-5 to 1e-6 on Kraken vs the ~1e-4 to 1e-2 range
+the historical Binance-based backtests in sections 14-20 used). This
+does not break the signal's mechanism (`funding_extreme_reversion_entries`
+only ever compares funding against its OWN rolling quantile, never an
+absolute magnitude), but it does mean the live-logged funding_rate
+values are on a different scale than the historical backtest data, and
+is exactly why this is an independent live check rather than a
+guaranteed replay of sections 14-20's numbers.
+
+`src.paper_trading.make_pending_order` was generalized to accept
+`pt_mult`/`sl_mult`/`offset_mult` overrides (previously hardcoded module
+constants tuned for `vol_breakout`) so this script could use
+funding_reversion's own geometry (2.0/2.0, matching
+`backtest_funding_reversion.py`) without touching `paper_test_live.py`'s
+existing behavior or its tests.
+
+Verified end to end against real Kraken Futures data for BTC/ETH/SOL:
+confirmed the funding history fetch, hourly resample/forward-fill, and
+join onto 4h OHLCV all produce non-NaN features (`ATR_ratio`,
+`funding_rate`) on the current bar, and that the underlying signal (both
+gated and ungated) fires correctly on recent history (13 raw / 5
+regime-filtered signals in the trailing 90 bars on BTC at time of
+writing) even though no NEW signal happened to fire on the exact latest
+candle during this check — expected, since this repo's own numbers
+already show this is not a high-frequency signal.
+
+State lives in `data/paper_trades_funding.csv`, independent of
+`paper_test_live.py`'s `data/paper_trades.csv`. Like section 12, this is
+ongoing: the signal is not frequent, so a meaningful live sample needs
+weeks, ideally run on a schedule (e.g. a Routine) rather than checked
+once.
+
+```bash
+python scripts/paper_test_funding_live.py --assets BTC/USD:USD ETH/USD:USD SOL/USD:USD
+```
+
 ## Project structure
 
 ```
@@ -1085,6 +1139,7 @@ trading-bot/
 │   ├── backtest_cross_sectional.py    # Cross-sectional ranking strategy across assets
 │   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9), daily-timeframe experiment (§10), OBV divergence (§15)
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
+│   ├── paper_test_funding_live.py     # Same, for the regime-filtered funding signal (§21)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
 │   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14, §18)
 │   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19)
@@ -1095,7 +1150,7 @@ trading-bot/
 │   ├── metrics.py              # Standard win-rate calculation (per closed trade)
 │   ├── labeling.py             # Rule-based primary signals and Triple-Barrier labeling
 │   ├── execution.py            # Maker order-queue simulation: optimistic OHLC-based fills (§9)
-│   ├── paper_trading.py        # Live shadow-simulation state machine (§12)
+│   ├── paper_trading.py        # Live shadow-simulation state machine (§12, §21)
 │   ├── market_making.py        # Two-sided quote/fill/inventory simulator with skew (§13)
 │   ├── regime.py               # Idea 1: market-regime context and the btc_alignment feature
 │   ├── calibration.py          # Idea 3: precision-based threshold calibration (instead of F1)

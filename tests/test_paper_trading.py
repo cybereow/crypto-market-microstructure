@@ -24,6 +24,21 @@ def test_make_pending_order_short_prices_limit_above_and_barriers_correctly():
     assert order['sl_price'] == order['limit_price'] + 1.0 * 10.0
 
 
+def test_make_pending_order_accepts_a_different_signals_own_geometry():
+    """scripts/paper_test_funding_live.py needs pt_mult=2.0/sl_mult=2.0
+    (symmetric, matching backtest_funding_reversion.py) instead of
+    vol_breakout's own 2.0/1.0 module defaults -- overriding must not
+    require editing the module constants other signals still rely on.
+    """
+    t = pd.Timestamp("2026-01-01 00:00:00")
+    order = make_pending_order('BTC/USDT', 1, t, signal_price=100.0, atr=10.0,
+                               offset_mult=0.2, pt_mult=2.0, sl_mult=2.0)
+
+    assert order['limit_price'] == 100.0 - 0.2 * 10.0
+    assert order['pt_price'] == order['limit_price'] + 2.0 * 10.0
+    assert order['sl_price'] == order['limit_price'] - 2.0 * 10.0
+
+
 def test_check_fill_direction():
     assert check_fill(1, limit_price=99.0, last_price=98.5) is True
     assert check_fill(1, limit_price=99.0, last_price=99.5) is False

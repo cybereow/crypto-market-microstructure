@@ -45,15 +45,24 @@ def new_state() -> pd.DataFrame:
 
 
 def make_pending_order(asset: str, side: int, signal_time: pd.Timestamp,
-                        signal_price: float, atr: float) -> dict:
+                        signal_price: float, atr: float,
+                        offset_mult: float = OFFSET_MULT, pt_mult: float = PT_MULT,
+                        sl_mult: float = SL_MULT) -> dict:
     """A new candidate trade just fired on a freshly-closed candle. Price
-    the resting limit the same way simulate_maker_fills does: `OFFSET_MULT`
+    the resting limit the same way simulate_maker_fills does: `offset_mult`
     ATR better than the signal price, in the maker direction.
+
+    `offset_mult`/`pt_mult`/`sl_mult` default to this module's own
+    vol_breakout-tuned constants (scripts/paper_test_live.py's signal);
+    pass a different signal's own tuned geometry explicitly (e.g.
+    scripts/paper_test_funding_live.py's pt_mult=2.0, sl_mult=2.0,
+    matching scripts/backtest_funding_reversion.py) rather than editing
+    these module constants, which stay vol_breakout's own defaults.
     """
-    offset = OFFSET_MULT * atr
+    offset = offset_mult * atr
     limit_price = signal_price - side * offset
-    pt_dist = PT_MULT * atr
-    sl_dist = SL_MULT * atr
+    pt_dist = pt_mult * atr
+    sl_dist = sl_mult * atr
     if side > 0:
         pt_price, sl_price = limit_price + pt_dist, limit_price - sl_dist
     else:
