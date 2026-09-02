@@ -71,7 +71,7 @@ def main():
                         help="One funding-rate file per --data file, in the SAME order "
                              "(download_funding_vision.py).")
     parser.add_argument("--signal", type=str, default="funding_reversion",
-                        choices=["funding_reversion", "funding_reversion_confirmed"],
+                        choices=["funding_reversion", "funding_reversion_confirmed", "funding_reversion_regime_filtered"],
                         help="'funding_reversion_confirmed' additionally requires price "
                              "(bb_position) to independently confirm the crowding thesis "
                              "(see docs/RESEARCH_LOG.md section 18).")

@@ -4,6 +4,7 @@ import pandas as pd
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           obi_momentum_entries, funding_extreme_reversion_entries,
                           funding_reversion_confirmed_entries,
+                          funding_reversion_regime_filtered_entries,
                           obv_divergence_entries, btc_lead_lag_entries,
                           triple_barrier_labels)
 
@@ -203,6 +204,46 @@ def test_funding_reversion_confirmed_entries_is_a_subset_of_the_base_signal():
     confirmed = funding_reversion_confirmed_entries(df, lookback=20, quantile=0.9)
     fired = confirmed != 0
     assert (confirmed[fired] == base[fired]).all()
+    assert int(fired.sum()) <= int((base != 0).sum())
+
+
+def test_funding_reversion_regime_filtered_entries_passes_through_when_not_expanding():
+    dates = pd.date_range("2023-01-01", periods=6, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': [0.0001] * 5 + [0.01],
+        'ATR_ratio': [1.0] * 6,  # stable/contracting -> not expanding
+    }, index=dates)
+    entries = funding_reversion_regime_filtered_entries(df, lookback=5, quantile=0.8)
+    assert entries.iloc[5] == -1
+
+
+def test_funding_reversion_regime_filtered_entries_blocked_when_volatility_expanding():
+    """A cascading-liquidation regime (ATR_ratio >= 1.05, the SAME cutoff
+    range_fade_entries uses) must block the trade even though funding
+    itself is extreme -- the whole point of section 20's filter.
+    """
+    dates = pd.date_range("2023-01-01", periods=6, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': [0.0001] * 5 + [0.01],
+        'ATR_ratio': [1.2] * 6,  # expanding
+    }, index=dates)
+    entries = funding_reversion_regime_filtered_entries(df, lookback=5, quantile=0.8)
+    assert (entries == 0).all()
+
+
+def test_funding_reversion_regime_filtered_entries_is_a_subset_of_the_base_signal():
+    rng = np.random.default_rng(11)
+    n = 300
+    dates = pd.date_range("2023-01-01", periods=n, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': rng.normal(0, 0.005, n),
+        'ATR_ratio': rng.uniform(0.7, 1.4, n),
+    }, index=dates)
+
+    base = funding_extreme_reversion_entries(df, lookback=20, quantile=0.9)
+    filtered = funding_reversion_regime_filtered_entries(df, lookback=20, quantile=0.9)
+    fired = filtered != 0
+    assert (filtered[fired] == base[fired]).all()
     assert int(fired.sum()) <= int((base != 0).sum())
 
 

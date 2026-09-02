@@ -69,6 +69,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §17 | LLM (Claude-API-shaped) approval gate on §14's funding signal — real API calls, real money, 1508 candidates: gate approved 2 (0.13%), and those 2 underperformed the ungated pool | **Null** — no evidence the gate adds value |
 | §18 | Price confirmation (bb_position) added on top of §14's funding signal, single a-priori threshold | **Null** — moved p from 0.112 to 0.310, not closer to significant |
 | §19 | Walk-forward stability check on §14's signal: 6 sequential yearly folds, same maker-fill methodology | **Mixed** — 4/6 folds positive (2 non-adjacent stretches, one p=0.016 alone), 2/6 negative (incl. the 2022 crash) |
+| §20 | Regime-filtering §14's signal off during volatility expansion (reusing `range_fade`'s existing ATR_ratio<1.05 cutoff) — pooled 2020-2026, single a-priori filter | **Significant** — maker PF 1.15, exp +0.26%, p=0.013 (p=0.0385 after deflating for 3 configs tried); walk-forward: 3 of 6 folds individually significant, 2 still negative |
 
 ## Project layout
 
@@ -88,8 +89,8 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_cross_sectional.py     # Cross-sectional ranking strategy
 │   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11, §15)
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
-│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14, §18)
-│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19)
+│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14, §18, §20)
+│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19, §20)
 │   ├── backtest_btc_lead_lag.py        # BTC-lead-lag cross-asset signal backtest (§16)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
@@ -108,7 +109,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log, §1-19
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-20
 ```
 
 ## Setup
@@ -168,8 +169,14 @@ ranking, order-flow imbalance, market making, live paper-testing) each have
 their own script under `scripts/` — see the project layout above, or
 `docs/RESEARCH_LOG.md` for the exact command used in each experiment.
 
-**5. Funding-rate-extreme reversion** (§14, alt-data, promising but not yet
-significant — p=0.112 at maker cost on the full 2020-2026 pooled history):
+**5. Funding-rate-extreme reversion, regime-filtered** (§14→§20: raw
+signal was promising but not significant, p=0.112; gating it off during
+volatility expansion — reusing `range_fade`'s existing ATR_ratio<1.05
+cutoff, not a threshold fit to this result — pushed it to p=0.013 pooled
+(p=0.0385 after deflating for the 3 configurations tried), with 3 of 6
+walk-forward folds individually significant. The strongest result in
+this repo's alt-data line — still not proof of a live, tradeable edge;
+see §20 for the full caveats):
 
 ```bash
 for s in BTCUSDT ETHUSDT SOLUSDT; do
@@ -179,17 +186,25 @@ done
 
 python scripts/backtest_funding_reversion.py \
   --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
-  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_regime_filtered
+
+python scripts/backtest_funding_reversion_walkforward.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_regime_filtered --n-folds 6
 ```
 
-Two more alt-data ideas were tested alongside it and came back **null**
-(§15-16, full detail and honest numbers in `docs/RESEARCH_LOG.md`) —
-`--signal obv_divergence` on `backtest_maker_fill.py` (adverse-selected
-away), and `python scripts/backtest_btc_lead_lag.py --data
-binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv --btc-data
+Two more alt-data ideas were tested alongside the raw signal and came
+back **null** (§15-16, full detail and honest numbers in
+`docs/RESEARCH_LOG.md`) — `--signal obv_divergence` on
+`backtest_maker_fill.py` (adverse-selected away), and `python
+scripts/backtest_btc_lead_lag.py --data binance_futures_ETH_USDT_4h.csv
+binance_futures_SOL_USDT_4h.csv --btc-data
 binance_futures_BTC_USDT_4h.csv` (negative expectancy even at maker
-cost). Reported here for the same reason every rejected idea in this
-project is: a null result is still a result.
+cost). A third attempt to improve the raw signal (price-confirmation,
+§18) also came back null. Reported here for the same reason every
+rejected idea in this project is: a null result is still a result.
 
 **6. LLM-gated shadow paper-trade (experimental, no capital at risk):**
 same `vol_breakout` candidate detection as step 4's live paper-trader, but

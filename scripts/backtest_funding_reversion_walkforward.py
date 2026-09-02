@@ -45,7 +45,7 @@ def main():
     parser.add_argument("--funding-data", type=str, nargs='+', required=True,
                         help="One funding-rate file per --data file, in the SAME order.")
     parser.add_argument("--signal", type=str, default="funding_reversion",
-                        choices=["funding_reversion", "funding_reversion_confirmed"])
+                        choices=["funding_reversion", "funding_reversion_confirmed", "funding_reversion_regime_filtered"])
     parser.add_argument("--lookback", type=int, default=90)
     parser.add_argument("--pt-mult", type=float, default=2.0)
     parser.add_argument("--sl-mult", type=float, default=2.0)

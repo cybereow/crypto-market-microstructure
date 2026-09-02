@@ -300,6 +300,43 @@ def funding_reversion_confirmed_entries(df: pd.DataFrame, lookback: int = 90,
     return entries
 
 
+def funding_reversion_regime_filtered_entries(df: pd.DataFrame, lookback: int = 90,
+                                               quantile: float = 0.90,
+                                               funding_col: str = 'funding_rate',
+                                               atr_ratio_col: str = 'ATR_ratio',
+                                               atr_ratio_max: float = 1.05) -> pd.Series:
+    """`funding_extreme_reversion_entries` (section 14, p=0.112 pooled;
+    section 19's walk-forward found it recurs across two separate
+    non-adjacent stretches but fails during a cascading-liquidation crash
+    regime -- 2022-03 to 2023-04, spanning Terra/Luna, 3AC, FTX), gated by
+    the SAME volatility-expansion guard `range_fade_entries` already uses
+    for the identical reason (mean-reversion loses to a genuinely
+    trending/cascading move once volatility is expanding, not merely
+    elevated). Deliberately reuses `range_fade_entries`'s existing
+    `atr_ratio_max=1.05` cutoff rather than fitting a new threshold to
+    this specific result -- a threshold chosen BECAUSE it makes this
+    signal's p-value look better would be exactly the kind of search
+    `src.significance.deflated_pvalue` exists to catch, not a validated
+    regime filter.
+
+    Rationale for WHY this specific regime should matter here: a cascading
+    liquidation event is exactly when funding can stay pinned at an
+    extreme for an extended stretch without the "crowded position"
+    unwinding the way the fade thesis assumes -- forced, sequential
+    liquidations keep pushing price the SAME direction funding already
+    signals, rather than snapping back. Short-horizon-expanding ATR is a
+    reasonable proxy for "market is in exactly that kind of dislocation
+    right now," independent of the funding number itself.
+    """
+    base = funding_extreme_reversion_entries(df, lookback=lookback, quantile=quantile,
+                                              funding_col=funding_col)
+    not_expanding = df[atr_ratio_col] < atr_ratio_max
+
+    entries = pd.Series(0, index=df.index)
+    entries[(base != 0) & not_expanding] = base[(base != 0) & not_expanding]
+    return entries
+
+
 def obv_divergence_entries(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
     """Primary signal: fade a price breakout that volume flow doesn't confirm.
 

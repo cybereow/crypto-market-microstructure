@@ -33,6 +33,7 @@ from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           volatility_breakout_entries, trend_pullback_entries,
                           range_fade_entries, obi_momentum_entries,
                           funding_extreme_reversion_entries, funding_reversion_confirmed_entries,
+                          funding_reversion_regime_filtered_entries,
                           obv_divergence_entries, triple_barrier_labels)
 from src.regime import build_btc_regime, add_alignment_features, REGIME_FEATURE_COLS
 from src.calibration import (precision_at_threshold_scorer, calibrate_threshold_for_precision,
@@ -76,6 +77,10 @@ SIGNAL_BUILDERS = {
     # funding_reversion, restricted to bars where price independently
     # confirms the crowding thesis too (see docstring, section 18).
     'funding_reversion_confirmed': lambda df, lookback: funding_reversion_confirmed_entries(df, lookback=lookback),
+    # funding_reversion, gated off during volatility expansion (the SAME
+    # ATR_ratio<1.05 guard range_fade_entries already uses) -- see
+    # docstring, section 19-20.
+    'funding_reversion_regime_filtered': lambda df, lookback: funding_reversion_regime_filtered_entries(df, lookback=lookback),
     # This asset's own volume flow vs. its own price -- needs only the
     # standard 'close'/'volume' OHLCV columns, no extra data source.
     'obv_divergence': lambda df, lookback: obv_divergence_entries(df, lookback=lookback),

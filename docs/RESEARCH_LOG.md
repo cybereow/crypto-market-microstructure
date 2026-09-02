@@ -987,6 +987,83 @@ python scripts/backtest_funding_reversion_walkforward.py \
   --signal funding_reversion --n-folds 6
 ```
 
+### 20. Regime-filtering the funding signal — the first result in this line to actually clear p<0.05
+
+Section 19's specific, stated hypothesis: the funding-reversion signal
+recurs across separate calendar stretches but fails specifically during
+a cascading-liquidation regime (fold 3, 2022-03 to 2023-04 — Terra/Luna,
+3AC, FTX), because forced sequential liquidations can keep pushing price
+the SAME direction funding already signals instead of it snapping back.
+`src.labeling.funding_reversion_regime_filtered_entries` tests this
+directly by gating the signal off whenever short-horizon volatility is
+expanding — reusing `range_fade_entries`'s EXISTING `ATR_ratio < 1.05`
+cutoff verbatim rather than fitting a new threshold to this result (a
+threshold chosen because it flatters this specific p-value would be
+exactly the search `deflated_pvalue` exists to catch, not a validated
+filter).
+
+**Pooled result, same three assets, same full 2020-2026 history:**
+
+| | funding_reversion (§14) | + regime filter |
+|---|---|---|
+| candidates | 2439 | 1456 (filtered to 60%) |
+| filled (maker) | 2167 | 1287 |
+| win rate (maker) | 52.2% | 53.5% |
+| PF (maker) | 1.07 | **1.15** |
+| exp/trade (maker) | +0.14% | **+0.26%** |
+| **p-value** | 0.112 | **0.0130** |
+
+**This is the first configuration in sections 14/18/20 to clear p<0.05 on
+the pooled test.** Correcting for the fact that this is the THIRD
+funding-signal configuration tried in this log (raw, price-confirmed,
+regime-filtered — `deflated_pvalue(0.013, 3)`): **p_deflated = 0.0385,
+still under 0.05.**
+
+**Walk-forward check, same 6 folds as section 19:**
+
+| Fold | Period | n | PF | exp/trade | p |
+|---|---|---|---|---|---|
+| 1 | 2020-01 to 2021-02 | 125 | 1.52 | +1.12% | **0.023** |
+| 2 | 2021-02 to 2022-03 | 199 | 1.43 | +0.90% | **0.009** |
+| 3 | 2022-03 to 2023-04 | 210 | 0.89 | −0.24% | 0.763 |
+| 4 | 2023-04 to 2024-05 | 203 | 1.34 | +0.40% | **0.033** |
+| 5 | 2024-05 to 2025-06 | 231 | 1.15 | +0.21% | 0.180 |
+| 6 | 2025-06 to 2026-07 | 319 | 0.88 | −0.19% | 0.845 |
+
+Still 4/6 folds positive — but now THREE of the four are individually
+significant on their own (folds 1, 2, 4), not just the pooled average.
+Fold 3's crash-period loss is smaller than section 19's unfiltered
+version (exp −0.24% vs −0.49%, PF 0.89 vs 0.80) but not eliminated — the
+filter reduced, rather than removed, the crash-regime drag, which is the
+honest expected outcome of a coarse volatility-expansion proxy applied
+to a genuinely chaotic multi-month stretch. Fold 6 (most recent year)
+remains negative and is not yet explained by the crowding-fade-fails
+hypothesis the way fold 3 is.
+
+**Verdict: the strongest result in this log's alt-data line, real but
+still bounded.** Not a proven, always-on edge — 2 of 6 folds still lose
+money, and every number here is still on the OPTIMISTIC maker-fill
+upper bound (README section 9's caveat: OHLC bars carry no real
+queue-position data). The honest next steps, if pursued, are (a) a live
+shadow paper-test against real quotes (the same `paper_test_live.py`
+pattern section 12 already established, adapted for this signal) to
+check whether the simulated fill rate and realized economics hold up
+against real order flow, not just historical OHLC, and (b) understanding
+fold 6's loss rather than assuming the regime story already explains
+everything.
+
+```bash
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_regime_filtered
+
+python scripts/backtest_funding_reversion_walkforward.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_regime_filtered --n-folds 6
+```
+
 ## Project structure
 
 ```
