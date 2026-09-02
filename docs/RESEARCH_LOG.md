@@ -829,6 +829,65 @@ than a new one. Reporting all three, not just the promising one, is the
 point of this log — see section 7 for what happens when that discipline
 slips.
 
+### 17. LLM (Claude-API-shaped) approval gate — real money, real candidates, no evidence it helps
+
+The natural follow-up question to a project built with AI pair-programming:
+can an LLM itself serve as the trading decision-maker, not just the tool
+used to build one? `src/llm_decision.py` + `scripts/backtest_llm_gate.py`
+implement this as an approve/reject gate sitting on top of an EXISTING
+rule-based signal — never a live-execution bot, and explicitly *not* held
+to this repo's usual statistical bar going in (an LLM call is not
+deterministic, so it can't be scored with `src/significance.py` the way a
+fixed rule or fitted classifier can). This section reports what actually
+happened when that gate was run for real.
+
+**What was tested, with real API calls against real money, not a mock:**
+the gate first on `vol_breakout` candidates (essentially zero raw edge to
+begin with — not a fair test of the gate itself), then — the fairer
+test — on section 14's `funding_reversion` candidates, the one signal in
+this whole log with a positive, if not-yet-significant, point estimate on
+its own (maker PF 1.07, exp +0.14%, p=0.112 on 2167 filled trades). If an
+LLM gate can add real judgment, THIS is the pool where it has something
+to work with.
+
+**Full-history result, funding_reversion, 1508 real candidates, every one
+decided by a real API call:**
+
+| | ALL candidates (ungated) | LLM-approved |
+|---|---|---|
+| n | 1508 | **2** (0.13%) |
+| win rate (maker) | 52.1% | 50.0% |
+| PF (maker) | **1.06** | 0.48 |
+| exp/trade (maker) | **+0.10%** | **−2.02%** |
+| p-value | — | 0.74-0.76 |
+
+The gate approved 2 of 1508 candidates — functionally indistinguishable
+from "never trade." And the two it did approve were WORSE than the
+ungated pool's own average, not better: negative expectancy against a
+positive baseline. A smaller (n=30) run on the same signal/model showed
+the same pattern (1 approved, non-significant). **Verdict: no evidence
+this gate adds value** — not marginal, not promising-but-underpowered,
+just null, with the added specificity that an approval rate this low
+means the gate isn't discriminating between candidates so much as
+almost-always saying no regardless of what's in front of it.
+
+**What this can and cannot tell you:** this result is about one specific
+model reached through one specific API endpoint, with one specific
+prompt design (`src/llm_decision.py`'s `DECISION_SYSTEM_PROMPT`), on two
+specific signals. It is not a general claim that "LLMs can't trade" —
+only that THIS configuration, tested honestly with real spend rather than
+assumed to work, didn't. Rerunning against a different model is a
+legitimate next step; rerunning the same model with a reworded prompt
+until something looks better is not — that is exactly the pattern section
+7 already retracted once.
+
+```bash
+python scripts/backtest_llm_gate.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion --lookback 90 --pt-mult 2.0 --sl-mult 2.0
+```
+
 ## Project structure
 
 ```

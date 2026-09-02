@@ -66,6 +66,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §14 | Funding-rate-extreme reversion (fade crowded long/short perpetual positioning) — a new alt-data signal, single a-priori config, pooled 2020-2026: maker-cost PF 1.07, exp +0.14%, p=0.112 | Promising, but **not significant** |
 | §15 | OBV divergence (fade a price breakout volume doesn't confirm) — maker PF 1.02 looked marginal, but unfilled candidates would-be won 76.4% vs 46.5% for filled | **Null** — adverse-selected away |
 | §16 | BTC-lead-lag on altcoins (trade ETH/SOL off BTC's own momentum) — cross-asset, pooled 2020-2026 | **Null** — negative expectancy even at maker cost |
+| §17 | LLM (Claude-API-shaped) approval gate on §14's funding signal — real API calls, real money, 1508 candidates: gate approved 2 (0.13%), and those 2 underperformed the ungated pool | **Null** — no evidence the gate adds value |
 
 ## Project layout
 
@@ -104,7 +105,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log, §1-16
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-17
 ```
 
 ## Setup
@@ -189,12 +190,17 @@ project is: a null result is still a result.
 
 **6. LLM-gated shadow paper-trade (experimental, no capital at risk):**
 same `vol_breakout` candidate detection as step 4's live paper-trader, but
-each candidate must also be approved by Claude (via the Messages API)
-before it's logged as a paper trade — every candidate is recorded either
-way, so the gate's effect can be compared against the ungated run later.
-This is explicitly *not* held to this repo's usual statistical bar (see
-[`src/llm_decision.py`](src/llm_decision.py) for why) — it's a probe, not
-a validated strategy.
+each candidate must also be approved by an LLM (any Messages-API-shaped
+endpoint) before it's logged as a paper trade — every candidate is
+recorded either way, so the gate's effect can be compared against the
+ungated run later. This is explicitly *not* held to this repo's usual
+statistical bar (see [`src/llm_decision.py`](src/llm_decision.py) for
+why) — it's a probe, not a validated strategy. **Result already in, on
+real API calls against §14's funding signal: §17 — no evidence the gate
+adds value** (1508 real candidates, 0.13% approved, and those
+underperformed the ungated pool). The tooling stays here for
+reproducing that result or testing a different model; it's not an
+open question this project is still chasing.
 
 Setup, once, in a fresh checkout:
 
