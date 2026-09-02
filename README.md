@@ -67,6 +67,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §15 | OBV divergence (fade a price breakout volume doesn't confirm) — maker PF 1.02 looked marginal, but unfilled candidates would-be won 76.4% vs 46.5% for filled | **Null** — adverse-selected away |
 | §16 | BTC-lead-lag on altcoins (trade ETH/SOL off BTC's own momentum) — cross-asset, pooled 2020-2026 | **Null** — negative expectancy even at maker cost |
 | §17 | LLM (Claude-API-shaped) approval gate on §14's funding signal — real API calls, real money, 1508 candidates: gate approved 2 (0.13%), and those 2 underperformed the ungated pool | **Null** — no evidence the gate adds value |
+| §18 | Price confirmation (bb_position) added on top of §14's funding signal, single a-priori threshold | **Null** — moved p from 0.112 to 0.310, not closer to significant |
 
 ## Project layout
 
@@ -86,7 +87,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_cross_sectional.py     # Cross-sectional ranking strategy
 │   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11, §15)
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
-│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14)
+│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14, §18)
 │   ├── backtest_btc_lead_lag.py        # BTC-lead-lag cross-asset signal backtest (§16)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
@@ -105,7 +106,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
-└── docs/RESEARCH_LOG.md  # Full experimental log, §1-17
+└── docs/RESEARCH_LOG.md  # Full experimental log, §1-18
 ```
 
 ## Setup

@@ -30,7 +30,8 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import OUTPUT_DIR
 from scripts.train_ml import create_features
-from src.labeling import funding_extreme_reversion_entries, triple_barrier_labels
+from scripts.train_meta_ml import SIGNAL_BUILDERS
+from src.labeling import triple_barrier_labels
 from src.execution import simulate_maker_fills, triple_barrier_from_fill
 from src.significance import bootstrap_mean_pvalue
 from src.metrics import net_pf_expectancy
@@ -44,13 +45,13 @@ def load_asset(data_path: str, funding_path: str) -> pd.DataFrame:
     return df
 
 
-def run_asset(data_path: str, funding_path: str, lookback: int, quantile: float,
+def run_asset(data_path: str, funding_path: str, signal: str, lookback: int,
               pt_mult: float, sl_mult: float, max_holding: int,
               offset_mult: float, queue_timeout: int) -> tuple:
     df = load_asset(data_path, funding_path)
     df_features = create_features(df)
     raw_atr = df_features['ATR_14'] * df_features['close']
-    entries = funding_extreme_reversion_entries(df_features, lookback=lookback, quantile=quantile)
+    entries = SIGNAL_BUILDERS[signal](df_features, lookback)
 
     market = triple_barrier_labels(df_features, entries, raw_atr, pt_mult=pt_mult,
                                     sl_mult=sl_mult, max_holding=max_holding)
@@ -69,10 +70,14 @@ def main():
     parser.add_argument("--funding-data", type=str, nargs='+', required=True,
                         help="One funding-rate file per --data file, in the SAME order "
                              "(download_funding_vision.py).")
+    parser.add_argument("--signal", type=str, default="funding_reversion",
+                        choices=["funding_reversion", "funding_reversion_confirmed"],
+                        help="'funding_reversion_confirmed' additionally requires price "
+                             "(bb_position) to independently confirm the crowding thesis "
+                             "(see docs/RESEARCH_LOG.md section 18).")
     parser.add_argument("--lookback", type=int, default=90,
                         help="Bars funding's own extremes are measured against "
                              "(default 90 = 15 days at 4h).")
-    parser.add_argument("--quantile", type=float, default=0.90)
     parser.add_argument("--pt-mult", type=float, default=2.0)
     parser.add_argument("--sl-mult", type=float, default=2.0)
     parser.add_argument("--max-holding", type=int, default=18)
@@ -92,8 +97,8 @@ def main():
             f"{len(args.funding_data)} -- need exactly one funding file per asset, in the "
             f"same order.")
 
-    print(f"Funding-extreme-reversion backtest -- lookback={args.lookback} bars, "
-          f"quantile={args.quantile}, pt/sl={args.pt_mult}/{args.sl_mult}\n")
+    print(f"Funding-extreme-reversion backtest -- signal={args.signal}, "
+          f"lookback={args.lookback} bars, pt/sl={args.pt_mult}/{args.sl_mult}\n")
 
     market_all, fills_all, maker_all = [], [], []
     for data_file, funding_file in zip(args.data, args.funding_data):
@@ -106,7 +111,7 @@ def main():
             print(f"  {funding_file}: not found, skipping {data_file}.")
             continue
 
-        market, fills, maker = run_asset(data_path, funding_path, args.lookback, args.quantile,
+        market, fills, maker = run_asset(data_path, funding_path, args.signal, args.lookback,
                                          args.pt_mult, args.sl_mult, args.max_holding,
                                          args.offset_mult, args.queue_timeout)
         if market.empty:

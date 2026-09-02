@@ -1,7 +1,9 @@
+import numpy as np
 import pandas as pd
 
 from src.labeling import (donchian_breakout_entries, rsi_reversion_entries,
                           obi_momentum_entries, funding_extreme_reversion_entries,
+                          funding_reversion_confirmed_entries,
                           obv_divergence_entries, btc_lead_lag_entries,
                           triple_barrier_labels)
 
@@ -158,6 +160,50 @@ def test_funding_extreme_reversion_entries_uses_custom_column_name():
     entries = funding_extreme_reversion_entries(df, lookback=5, quantile=0.8,
                                                 funding_col='my_funding')
     assert entries.iloc[5] == -1
+
+
+def test_funding_reversion_confirmed_entries_fires_when_price_confirms():
+    dates = pd.date_range("2023-01-01", periods=12, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': [0.0001] * 5 + [0.01] + [0.0001] * 5 + [-0.01],
+        'bb_position': [0.0] * 5 + [0.7] + [0.0] * 5 + [-0.7],
+    }, index=dates)
+    entries = funding_reversion_confirmed_entries(df, lookback=5, quantile=0.8, bb_threshold=0.5)
+    assert entries.iloc[5] == -1
+    assert entries.iloc[11] == 1
+
+
+def test_funding_reversion_confirmed_entries_filters_out_unconfirmed_spike():
+    """Funding fires its own extreme, but price is NOT extended in the
+    same direction -- the confirmed signal must abstain (this is the
+    whole point of the filter).
+    """
+    dates = pd.date_range("2023-01-01", periods=6, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': [0.0001] * 5 + [0.01],
+        'bb_position': [0.0] * 6,
+    }, index=dates)
+    entries = funding_reversion_confirmed_entries(df, lookback=5, quantile=0.8, bb_threshold=0.5)
+    assert (entries == 0).all()
+
+
+def test_funding_reversion_confirmed_entries_is_a_subset_of_the_base_signal():
+    """It only ever filters; it must never invent entries
+    funding_extreme_reversion_entries would not give.
+    """
+    rng = np.random.default_rng(7)
+    n = 300
+    dates = pd.date_range("2023-01-01", periods=n, freq="4h")
+    df = pd.DataFrame({
+        'funding_rate': rng.normal(0, 0.005, n),
+        'bb_position': rng.normal(0, 0.6, n),
+    }, index=dates)
+
+    base = funding_extreme_reversion_entries(df, lookback=20, quantile=0.9)
+    confirmed = funding_reversion_confirmed_entries(df, lookback=20, quantile=0.9)
+    fired = confirmed != 0
+    assert (confirmed[fired] == base[fired]).all()
+    assert int(fired.sum()) <= int((base != 0).sum())
 
 
 def test_obv_divergence_entries_bearish_when_price_high_not_confirmed_by_obv():

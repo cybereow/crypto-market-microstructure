@@ -265,6 +265,41 @@ def funding_extreme_reversion_entries(df: pd.DataFrame, lookback: int = 90,
     return entries
 
 
+def funding_reversion_confirmed_entries(df: pd.DataFrame, lookback: int = 90,
+                                         quantile: float = 0.90,
+                                         funding_col: str = 'funding_rate',
+                                         bb_col: str = 'bb_position',
+                                         bb_threshold: float = 0.5) -> pd.Series:
+    """`funding_extreme_reversion_entries` (section 14 of the research log,
+    p=0.112 -- real but short of significant on its own), restricted to
+    bars where price ALSO independently confirms the crowding thesis:
+    price extended in the SAME direction being faded (`bb_position` past
+    `bb_threshold`), not just funding.
+
+    Rationale: funding alone is real but noisy -- a funding spike can be
+    transient without genuine price overextension behind it. Requiring a
+    second, independent signal FAMILY (price/Bollinger extension, not
+    another funding-derived number) to agree before taking the trade is
+    the same "combine independent weak signals" logic behind this
+    project's meta-labeling approach (sections 5-7), just expressed as an
+    explicit conjunctive rule instead of a fitted classifier -- cheaper to
+    test, easier to reason about, and not vulnerable to overfitting a
+    training split the way a classifier is. `bb_position` (from
+    scripts/train_ml.create_features) is centred at 0 and spans roughly
+    [-1, +1]: a short (fading crowded longs) additionally requires
+    `bb_position > bb_threshold` (price already pushed up through its own
+    upper band); a long requires the symmetric downside extension.
+    """
+    base = funding_extreme_reversion_entries(df, lookback=lookback, quantile=quantile,
+                                              funding_col=funding_col)
+    bb = df[bb_col]
+
+    entries = pd.Series(0, index=df.index)
+    entries[(base == -1) & (bb > bb_threshold)] = -1
+    entries[(base == 1) & (bb < -bb_threshold)] = 1
+    return entries
+
+
 def obv_divergence_entries(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
     """Primary signal: fade a price breakout that volume flow doesn't confirm.
 

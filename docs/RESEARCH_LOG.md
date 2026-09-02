@@ -888,6 +888,49 @@ python scripts/backtest_llm_gate.py \
   --signal funding_reversion --lookback 90 --pt-mult 2.0 --sl-mult 2.0
 ```
 
+### 18. Price confirmation on top of funding reversion — moved further from significant, not closer
+
+Section 14's funding signal is real but short of significant (p=0.112).
+A natural, well-motivated next attempt, in the same spirit as this
+project's meta-labeling approach (combine independent weak signals) but
+expressed as a plain rule instead of a fitted classifier:
+`src.labeling.funding_reversion_confirmed_entries` restricts section 14's
+entries to bars where price ALSO independently confirms the crowding
+thesis (`bb_position` extended past +/-0.5 in the same direction being
+faded), instead of trusting funding alone.
+
+**Result, same full history, same three assets, single a-priori
+threshold (bb_threshold=0.5, no sweep):**
+
+| | funding_reversion (§14) | + price confirmation |
+|---|---|---|
+| candidates | 2439 | 926 (filtered to 38%) |
+| win rate (maker) | 52.2% | 51.6% |
+| PF (maker) | 1.07 | 1.04 |
+| exp/trade (maker) | +0.14% | +0.10% |
+| **p-value** | **0.112** | **0.310 — worse** |
+
+The filter did not sharpen the signal; it moved further from
+significance while cutting the sample by 62%. **Verdict: null — the
+"combine independent signals" instinct, reasonable on paper, didn't pay
+off here.** A plausible reason, not just a shrug: requiring price to
+already be extended before taking the trade likely selects the LATE part
+of each crowding move, after the cheaper/earlier part of the reversion
+has already happened — confirmation cost more opportunity than it added
+in precision. This is reported as a single test, not the first of a
+threshold sweep; trying several `bb_threshold` values until one clears
+p<0.05 would be exactly the multiple-testing trap section 7 already
+covers (`src.significance.deflated_pvalue` exists precisely so that kind
+of search is priced in if pursued, rather than reported as if it were a
+single a-priori result).
+
+```bash
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_confirmed
+```
+
 ## Project structure
 
 ```
@@ -910,7 +953,7 @@ trading-bot/
 │   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9), daily-timeframe experiment (§10), OBV divergence (§15)
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
-│   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14)
+│   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14, §18)
 │   ├── backtest_btc_lead_lag.py       # BTC-lead-lag cross-asset signal backtest (§16)
 │   └── backtest_grid.py               # Grid Trading bot backtest
 ├── src/
