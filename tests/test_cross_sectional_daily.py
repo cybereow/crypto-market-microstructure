@@ -15,6 +15,7 @@ from src.cross_sectional_daily import (
     resample_daily, build_close_panel, cross_sectional_feature,
     long_short_book, backtest_long_short, equity_stats,
     daily_funding_panel, apply_funding,
+    composite_feature, vol_target_book, realized_vol_panel,
 )
 
 
@@ -143,6 +144,62 @@ def test_daily_funding_panel_sums_three_charges():
     days = pd.date_range('2023-01-01', periods=2)
     panel = daily_funding_panel(fund, days)
     assert panel.loc[days[0], 'A'] == pytest.approx(0.0003)
+
+
+def test_vol_target_book_is_dollar_neutral_and_risk_scaled():
+    # 4 assets, M=2. Longs A,B; shorts C,D. A twice as volatile as B, so A's
+    # long weight must be ~half of B's (1/vol scaling), and the book stays
+    # dollar-neutral with gross ~1.
+    day = pd.DatetimeIndex(['2023-06-01'])
+    feat = pd.DataFrame({'A': [0.9], 'B': [0.8], 'C': [-0.8], 'D': [-0.9]}, index=day)
+    vol = pd.DataFrame({'A': [0.04], 'B': [0.02], 'C': [0.02], 'D': [0.02]}, index=day)
+    w = vol_target_book(feat, m_per_side=2, vol_panel=vol)
+    row = w.iloc[0]
+    assert row.sum() == pytest.approx(0.0, abs=1e-9)        # dollar-neutral
+    assert row.abs().sum() == pytest.approx(1.0)            # gross 1
+    assert row['A'] > 0 and row['B'] > 0
+    # B (half the vol of A) carries ~twice A's weight.
+    assert row['B'] == pytest.approx(2 * row['A'], rel=1e-6)
+
+
+def test_vol_target_book_falls_back_to_equal_weight_without_vol():
+    day = pd.DatetimeIndex(['2023-06-01'])
+    feat = pd.DataFrame({'A': [0.9], 'B': [0.8], 'C': [-0.8], 'D': [-0.9]}, index=day)
+    w = vol_target_book(feat, m_per_side=2, vol_panel=None).iloc[0]
+    assert w['A'] == pytest.approx(0.25) and w['B'] == pytest.approx(0.25)
+    assert w['C'] == pytest.approx(-0.25) and w['D'] == pytest.approx(-0.25)
+
+
+def test_composite_pure_momentum_equals_zscored_momentum():
+    # carry_weight=0 -> composite is just the z-scored momentum feature, and
+    # ranking is preserved vs the raw momentum feature.
+    closes = pd.DataFrame({
+        'A': np.linspace(1, 2, 40), 'B': np.linspace(2, 1.5, 40),
+        'C': np.linspace(1, 3, 40), 'D': np.linspace(3, 1, 40),
+    }, index=pd.date_range('2023-01-01', periods=40))
+    comp = composite_feature(closes, funding_daily=None, mom_lb=5, carry_weight=0.0)
+    mom = cross_sectional_feature(closes, 'momentum', 5)
+    # Same cross-sectional ordering each day (z-score is monotonic).
+    last = comp.iloc[-1].rank()
+    assert last.equals(mom.iloc[-1].rank())
+
+
+def test_composite_carry_shifts_ranking_toward_low_funding():
+    # Two assets tied on momentum; the one with LOWER funding must rank higher
+    # once carry is blended in (carry = -funding).
+    idx = pd.date_range('2023-01-01', periods=20)
+    closes = pd.DataFrame({'A': np.linspace(1, 2, 20), 'B': np.linspace(1, 2, 20)}, index=idx)
+    funding = pd.DataFrame({'A': [0.01] * 20, 'B': [-0.01] * 20}, index=idx)
+    comp = composite_feature(closes, funding_daily=funding, mom_lb=3, carry_weight=0.5)
+    # B (negative funding -> positive carry) should score >= A on the last row.
+    assert comp['B'].iloc[-1] > comp['A'].iloc[-1]
+
+
+def test_realized_vol_panel_is_point_in_time():
+    closes = pd.DataFrame({'A': np.linspace(1, 2, 30)}, index=pd.date_range('2023-01-01', periods=30))
+    vp = realized_vol_panel(closes, lookback=5)
+    assert vp.iloc[:6].isna().all().all()   # lookback+shift undefined at start
+    assert vp.iloc[10].notna().all()
 
 
 def test_equity_stats_on_known_series():
