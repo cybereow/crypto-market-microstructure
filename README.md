@@ -63,6 +63,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §11-b | Same OBI signal re-tested at tick level (5-second bars): strongly significant (p=0.0003), robust to a direction-flip check and a time-split check | Real edge — but ~10x too small to clear even optimistic maker fees |
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
+| §14 | "3-4 signals/day" digest: a fixed, unfitted conviction score ranks a wide candidate pool and spends a daily budget on the best. The ranking has real power (permutation p=0.0002) — but only at a selectivity the daily quota forbids; forcing 4/day dilutes it to a loss | Frequency solved, **profit not** — breakeven at maker cost, loses at taker |
 
 ## Project layout
 
@@ -84,7 +85,8 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
-│   └── backtest_grid.py                # Grid trading backtest
+│   ├── backtest_grid.py                # Grid trading backtest
+│   └── daily_signal_report.py         # "3-4 signals/day" digest: rank a wide pool, spend a daily budget (§14)
 ├── src/
 │   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
 │   ├── execution.py      # Maker-order queue fill simulation (§9)
@@ -92,6 +94,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── paper_trading.py  # Live shadow paper-trading state machine (§12)
 │   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
 │   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
+│   ├── daily_signals.py  # Daily-digest engine: candidate pool + fixed conviction ranking + daily budget (§14)
 │   ├── metrics.py        # Trade-level win rate / profit factor
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests

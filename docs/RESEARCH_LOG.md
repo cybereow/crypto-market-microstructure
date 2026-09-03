@@ -721,6 +721,105 @@ Run on your own data:
 python scripts/backtest_market_making.py --data binance_l2obi_BTCUSDT_5s.csv --k-spread 10.0
 ```
 
+### 14. The "3-4 signals a day" request — frequency solved, profitability not
+
+Every section above optimises a single strategy for *edge*. This section
+answers a different, product-shaped question that keeps coming up: *"just
+give me 3-4 tradeable signals every day."* It is worth answering precisely,
+because the naive way to build it is a trap this whole log has been
+documenting.
+
+**The trap.** You cannot manufacture "3-4 signals a day" by loosening a
+filter until enough trades appear. Section 8 established the binding
+constraint — the raw per-trade edge (~0.15%) is smaller than a retail taker
+round-trip (~0.40%) — so *firing more often just buys more
+negative-expectancy trades faster.* A daily-quota product has to be built the
+opposite way: generate a **wide** candidate pool, then spend a **fixed daily
+budget** of N slots on the highest-conviction candidates only.
+
+**Design (`src/daily_signals.py`, `scripts/daily_signal_report.py`).**
+
+1. *Candidate pool* — every rule-based primary signal already in
+   `labeling.py` (reversion, vol_breakout, trend_pullback), pooled across an
+   8-asset 1-hour universe (ETH, SOL, LINK, AVAX, ADA, XRP, DOGE, LTC; BTC as
+   regime context, not traded). 2022-01 to 2025-08, **17,500 candidates over
+   1,334 days**.
+2. *Conviction score* — a **fixed, unfitted** weighting of only the three
+   effects earlier sections actually *measured* as real (not the ones §7
+   retracted): BTC-regime alignment (§8: aligned 53.4% vs against 48.9%),
+   volatility state matched to each signal's own economic rationale, and
+   own-asset trend agreement signed by signal family. **No parameter in the
+   score is tuned to a backtest number** — that is the §7 failure mode, by
+   construction avoided.
+3. *Selection* — two methods, reported side by side: **top-N-per-day** (the
+   literal digest; a bounded ≤24h same-day ranking lookahead) and a
+   fully-causal **frequency-calibrated threshold** (a single constant,
+   analogous to §7's surviving fixed-0.55 gate, calibrated to hit the target
+   rate — never to trade outcomes). The threshold method is the honest
+   economics headline.
+
+**Results** (pt/sl = 2/2, breakeven 50%; maker cost 0.08% is §8's optimistic
+floor, taker 0.40% the realistic retail figure):
+
+| Universe / signals | selection | signals/day | win% | maker PF | maker exp/trade | perm_p (ranking) |
+|---|---|---|---|---|---|---|
+| 3-asset mix | threshold | 4.00 | 49.8% | 0.90 | −0.105% | 0.017 |
+| 6-asset mix | threshold | 4.00 | 52.2% | 1.01 | +0.012% | **0.0002** |
+| 8-asset mix | threshold | 4.00 | 51.2% | 0.97 | −0.026% | 0.015 |
+| 8-asset mix | top-4/day | 3.91 | 49.6% | 0.93 | −0.072% | 0.779 |
+| **reversion only** | **top-4/day** | **2.86** | **51.2%** | **1.00** | **−0.000%** | **0.0002** |
+| reversion only | threshold (forced 4/day) | 4.00 | 48.0% | 0.82 | −0.232% | 0.974 |
+
+**Two things are true at once, and they are in direct conflict:**
+
+1. **The conviction ranking is real** — when the digest is *allowed to be
+   selective*, the permutation test (does this pick beat a random pick of the
+   same size from the pool?) is strongly significant: p=0.0002 for reversion
+   top-4/day and for the 6-asset threshold. The score is not noise; it does
+   pick better-than-average trades.
+2. **The daily quota destroys that selectivity.** Reversion alone only fires
+   ~2.86 high-conviction times a day, and at that rate it lands *exactly* at
+   breakeven (PF 1.00) at the optimistic maker cost. The moment you *force*
+   the rate up to a guaranteed 4/day (drop the threshold to 0.455, admitting
+   almost the whole pool), the ranking edge vanishes (perm_p 0.97) and PF
+   collapses to 0.82. Adding DOGE/LTC to widen the pool had the same diluting
+   effect the log has seen before: the 6-asset edge (perm_p 0.0002) faded to
+   perm_p 0.015 at 8 assets — apparent edges shrink as the sample grows.
+
+**Verdict.** The *frequency* target is trivially achievable — the tool emits
+a clean, ranked 3-4-signal digest every day (`--today`). The *profitability*
+target is not met: at realistic retail (taker) cost every configuration
+loses (exp −0.32% to −0.55%/trade), and even at the optimistic maker floor
+the best the quota allows is **breakeven, not profit** — and net-expectancy>0
+is *not* statistically established (bootstrap p well above 0.05 everywhere,
+before even correcting for the ~6 configurations examined here). This does
+not overturn §8; it reproduces it from the product angle. The one genuinely
+positive result — that the unfitted conviction score has real ranking power —
+only survives *at the selectivity the quota forbids*. A daily-quota signal
+service is therefore honest only as *"here are today's best-ranked setups,
+which reach breakeven at maker cost if they fill"* — not as a profit promise.
+The §9 adverse-selection risk (do the passive orders that back the maker cost
+actually fill, or do you fill the losers and miss the winners?) still applies
+and is the first thing a live test would have to settle.
+
+Run on your own data:
+```bash
+for s in BTCUSDT ETHUSDT SOLUSDT LINKUSDT AVAXUSDT ADAUSDT XRPUSDT DOGEUSDT LTCUSDT; do
+  python scripts/download_klines_vision.py --symbol $s --timeframe 1h --start-date 2022-01-01
+done
+
+# Full backtest (honest economics: taker AND maker, with significance tests)
+python scripts/daily_signal_report.py \
+  --data binance_ETH_USDT_1h.csv binance_SOL_USDT_1h.csv binance_LINK_USDT_1h.csv \
+         binance_AVAX_USDT_1h.csv binance_ADA_USDT_1h.csv binance_XRP_USDT_1h.csv \
+         binance_DOGE_USDT_1h.csv binance_LTC_USDT_1h.csv \
+  --btc-regime-file binance_BTC_USDT_1h.csv \
+  --signals reversion vol_breakout trend_pullback --pt-mult 2.0 --sl-mult 2.0 --per-day 4
+
+# Today's ranked digest (the product itself)
+python scripts/daily_signal_report.py --data <same> --btc-regime-file binance_BTC_USDT_1h.csv --today
+```
+
 ## Project structure
 
 ```
