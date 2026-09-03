@@ -133,6 +133,45 @@ def backtest_long_short(close_panel: pd.DataFrame, weights: pd.DataFrame,
     return out.iloc[:-1].dropna(how='any')
 
 
+def daily_funding_panel(funding_by_asset: dict, date_index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Per-day total funding rate for each asset, aligned to `date_index`.
+
+    Binance perps charge funding every 8h (3x/day). The downloader forward-
+    fills the 8-hourly rate to an hourly series, so the true daily total is
+    the sum of the ~3 distinct charges that day — recovered here as the daily
+    mean of the hourly series times 3 (each 8h block is constant under the
+    ffill, so mean*3 == sum of the three charges). Positive funding means
+    longs pay shorts.
+    """
+    cols = {}
+    for name, f in funding_by_asset.items():
+        s = f['funding_rate'] if 'funding_rate' in f.columns else f.iloc[:, 0]
+        daily = s.resample('1D').mean() * 3.0
+        cols[name] = daily
+    panel = pd.DataFrame(cols).reindex(date_index)
+    return panel
+
+
+def apply_funding(bt: pd.DataFrame, weights: pd.DataFrame,
+                  funding_daily: pd.DataFrame) -> pd.DataFrame:
+    """Subtract funding P&L from an existing backtest frame.
+
+    A signed position weight `w_i` held over day t pays `w_i * f_i,t` in
+    funding (long pays positive funding, short receives it), so the book's
+    funding P&L is `-Σ w_i * f_i`. On a momentum book the longs are recent
+    winners (often richly-funded) and the shorts recent losers, so this can
+    be a real drag — which is exactly why it must be measured, not assumed
+    away. Returns a copy of `bt` with `funding` and a funding-adjusted `net`.
+    """
+    f = funding_daily.reindex(index=weights.index, columns=weights.columns)
+    funding_pnl = -(weights * f).sum(axis=1)
+    out = bt.copy()
+    fp = funding_pnl.reindex(out.index).fillna(0.0)
+    out['funding'] = fp
+    out['net'] = out['net'] + fp
+    return out
+
+
 def equity_stats(daily_net: pd.Series, periods_per_year: int = 365) -> dict:
     """Summary stats for a daily net-return series."""
     r = daily_net.dropna()

@@ -64,7 +64,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
 | §14 | "3-4 signals/day" digest: a fixed, unfitted conviction score ranks a wide candidate pool and spends a daily budget on the best. The ranking has real power (permutation p=0.0002) — but only at a selectivity the daily quota forbids; forcing 4/day dilutes it to a loss | Frequency solved, **profit not** — breakeven at maker cost, loses at taker |
-| §15 | Daily **cross-sectional momentum** (long strongest / short weakest, dollar-neutral, 4 signals/day): Sharpe ~1.0 and +34.5%/yr at maker cost, stable in both out-of-sample halves (0.95 / 1.03); reversal loses everywhere (clean direction check). Pre-registered p=0.026, deflated to 0.19 | **Best result** — real, stable, cost-clearing edge; strict significance still borderline |
+| §15 | Daily **cross-sectional momentum** (long strongest / short weakest, dollar-neutral, 4 signals/day): +32.3%/yr and Sharpe 0.94 at maker cost **after real funding cost**, stable in both out-of-sample halves (0.95 / 1.03); reversal loses everywhere (clean direction check). Pre-registered p=0.026, deflated to 0.24 | **Best result** — real, stable, cost- and funding-clearing edge; strict significance still borderline |
 
 ## Project layout
 

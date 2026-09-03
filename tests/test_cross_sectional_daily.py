@@ -14,6 +14,7 @@ import pytest
 from src.cross_sectional_daily import (
     resample_daily, build_close_panel, cross_sectional_feature,
     long_short_book, backtest_long_short, equity_stats,
+    daily_funding_panel, apply_funding,
 )
 
 
@@ -113,6 +114,35 @@ def test_backtest_matches_hand_computed_return():
     assert bt['gross'].iloc[0] == pytest.approx(0.15)
     assert bt['cost'].iloc[0] == pytest.approx(0.001)
     assert bt['net'].iloc[0] == pytest.approx(0.149)
+
+
+def test_funding_sign_long_pays_short_receives():
+    # One day, weights long A (+0.5) / short B (-0.5), both with +1% daily
+    # funding. Long pays -> -0.5*0.01; short receives -> -(-0.5)*0.01 = +0.005.
+    # Net funding P&L = -(0.5*0.01 + (-0.5)*0.01) = 0. Then make them differ.
+    idx = pd.DatetimeIndex(['2023-06-01'])
+    weights = pd.DataFrame({'A': [0.5], 'B': [-0.5]}, index=idx)
+    bt = pd.DataFrame({'gross': [0.0], 'cost': [0.0], 'net': [0.0],
+                       'turnover': [1.0]}, index=idx)
+    # Equal funding -> nets to zero on a dollar-neutral book.
+    feq = pd.DataFrame({'A': [0.01], 'B': [0.01]}, index=idx)
+    out = apply_funding(bt, weights, feq)
+    assert out['funding'].iloc[0] == pytest.approx(0.0)
+    # Long side funded higher than short side -> a net drag on the book.
+    fdiff = pd.DataFrame({'A': [0.02], 'B': [0.00]}, index=idx)
+    out2 = apply_funding(bt, weights, fdiff)
+    assert out2['funding'].iloc[0] == pytest.approx(-(0.5 * 0.02 + (-0.5) * 0.0))
+    assert out2['funding'].iloc[0] < 0  # long pays high funding -> negative
+
+
+def test_daily_funding_panel_sums_three_charges():
+    # Hourly-ffilled funding constant at 0.0001 -> daily total = 3 charges =
+    # mean*3 = 0.0003.
+    idx = pd.date_range('2023-01-01', periods=48, freq='h')
+    fund = {'A': pd.DataFrame({'funding_rate': [0.0001] * 48}, index=idx)}
+    days = pd.date_range('2023-01-01', periods=2)
+    panel = daily_funding_panel(fund, days)
+    assert panel.loc[days[0], 'A'] == pytest.approx(0.0003)
 
 
 def test_equity_stats_on_known_series():

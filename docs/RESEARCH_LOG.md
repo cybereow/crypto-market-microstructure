@@ -891,11 +891,26 @@ exact mirror, short-term reversal.
   assumption here is *far* more defensible — a daily rebalance can rest
   patient limit orders across the whole day rather than chase a breakout, so
   the §9 adverse-selection risk is much smaller (though not zero).
-- **Not modelled, and the real next test:** perpetual **funding cost** on the
-  short leg (the honest reason maker economics are still a ceiling), and a
-  live daily-rebalance paper test. A funding-rate downloader already exists
-  (`scripts/download_funding_vision.py`); wiring it into the short leg's cost
-  is the concrete next step, not another backtest.
+- **Funding cost — now modelled, and it barely dents the result.** The
+  honest worry was that shorting perps to build the short leg would bleed
+  funding. `--funding` (real Binance funding history via
+  `scripts/download_funding_vision.py`, 8 assets, longs pay / shorts receive,
+  3 charges/day) puts a number on it: momentum-14d goes from +34.5% ->
+  **+32.3%/yr** and Sharpe 0.99 -> **0.94**. A ~2.2%/yr drag, not a killer —
+  precisely because the book is dollar-neutral, so the funding the longs pay
+  is largely offset by what the shorts receive. The strategy survives its own
+  most-suspected hidden cost.
+
+| momentum-14d, maker | no funding | with funding |
+|---|---|---|
+| annual return | +34.5% | **+32.3%** |
+| Sharpe | 0.99 | **0.94** |
+| total (3.7y) | +152% | +137% |
+
+- **The real remaining test** is no longer a backtest: it is a live
+  daily-rebalance paper run (like §12's, but at the daily close) to confirm
+  the maker fills and to catch anything the historical funding series smooths
+  over. That, plus widening the universe, is where this edge goes next.
 
 This is the payoff of not stopping at §14: the same "4 signals a day" product,
 rebuilt as a relative bet, goes from breakeven to a stable ~1.0-Sharpe,

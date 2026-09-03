@@ -32,6 +32,7 @@ from src.config import OUTPUT_DIR
 from src.cross_sectional_daily import (
     resample_daily, build_close_panel, cross_sectional_feature,
     long_short_book, backtest_long_short, equity_stats,
+    daily_funding_panel, apply_funding,
 )
 from src.significance import bootstrap_mean_pvalue, deflated_pvalue
 
@@ -60,6 +61,9 @@ def main():
     p.add_argument("--maker-cost", type=float, default=0.0008)
     p.add_argument("--signals", nargs='+', default=['momentum', 'reversal'])
     p.add_argument("--lookbacks", nargs='+', type=int, default=[3, 7, 14, 30])
+    p.add_argument("--funding", action='store_true',
+                   help="Subtract perpetual funding P&L (longs pay, shorts receive). Reads "
+                        "binance_funding_<SYMBOL>.csv per asset; the honest short-leg cost.")
     p.add_argument("--today", action='store_true',
                    help="Print today's long/short book for a single --signal/--lookback.")
     p.add_argument("--signal", default='reversal', help="For --today.")
@@ -72,6 +76,21 @@ def main():
         return
     print(f"  Panel: {panel.shape[1]} assets x {panel.shape[0]} days "
           f"({panel.index.min():%Y-%m-%d} -> {panel.index.max():%Y-%m-%d})")
+
+    funding_daily = None
+    if args.funding:
+        fby = {}
+        for name in panel.columns:
+            symbol = name.replace('_', '')  # ETH_USDT -> ETHUSDT
+            fpath = os.path.join(OUTPUT_DIR, f"binance_funding_{symbol}.csv")
+            if os.path.exists(fpath):
+                fby[name] = pd.read_csv(fpath, index_col='timestamp', parse_dates=True)
+            else:
+                print(f"    funding for {name} not found ({fpath}); its funding treated as 0.")
+        funding_daily = daily_funding_panel(fby, panel.index) if fby else None
+        if funding_daily is not None:
+            print(f"  Funding: modelling perpetual funding P&L on {len(fby)}/{panel.shape[1]} "
+                  f"assets (longs pay, shorts receive).")
 
     if args.today:
         feat = cross_sectional_feature(panel, args.signal, args.lookback)
@@ -109,6 +128,8 @@ def main():
             feat = cross_sectional_feature(panel, signal, lb)
             weights = long_short_book(feat, args.m_per_side)
             bt = backtest_long_short(panel, weights, cost_per_side)
+            if funding_daily is not None:
+                bt = apply_funding(bt, weights, funding_daily)
             st = equity_stats(bt['net'])
             boot_p = bootstrap_mean_pvalue(bt['net'].to_numpy(), n_iter=5000)
             boot_p_def = deflated_pvalue(boot_p, n_configs)
@@ -124,10 +145,14 @@ def main():
               f"ann {st['ann_return']:.1%}, deflated p={pdef:.4f} "
               f"-> {'SIGNIFICANT' if sig else 'not significant after correction'}")
 
+    funding_note = ("funding P&L IS included above (--funding)."
+                    if funding_daily is not None else
+                    "shorting perps carries funding cost NOT modelled here — pass --funding "
+                    "to include it.")
     print(f"\n  * boot_p: bootstrap p that daily net expectancy > 0, deflated for "
           f"{n_configs} configs.\n  Turnover is one-way daily traded fraction of the book; "
-          f"cost already scales with it.\n  Reminder: shorting perps carries funding cost not "
-          f"modelled here; treat maker economics as an optimistic floor (§8-9).")
+          f"cost already scales with it.\n  Reminder: {funding_note} Maker economics still "
+          f"assume passive fills — treat as an optimistic floor (§8-9).")
 
 
 if __name__ == "__main__":
