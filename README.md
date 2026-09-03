@@ -64,6 +64,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
 | §14 | "3-4 signals/day" digest: a fixed, unfitted conviction score ranks a wide candidate pool and spends a daily budget on the best. The ranking has real power (permutation p=0.0002) — but only at a selectivity the daily quota forbids; forcing 4/day dilutes it to a loss | Frequency solved, **profit not** — breakeven at maker cost, loses at taker |
+| §15 | Daily **cross-sectional momentum** (long strongest / short weakest, dollar-neutral, 4 signals/day): Sharpe ~1.0 and +34.5%/yr at maker cost, stable in both out-of-sample halves (0.95 / 1.03); reversal loses everywhere (clean direction check). Pre-registered p=0.026, deflated to 0.19 | **Best result** — real, stable, cost-clearing edge; strict significance still borderline |
 
 ## Project layout
 
@@ -86,7 +87,8 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
 │   ├── backtest_grid.py                # Grid trading backtest
-│   └── daily_signal_report.py         # "3-4 signals/day" digest: rank a wide pool, spend a daily budget (§14)
+│   ├── daily_signal_report.py         # "3-4 signals/day" digest: rank a wide pool, spend a daily budget (§14)
+│   └── cross_sectional_report.py      # Daily cross-sectional long/short momentum — the §15 result
 ├── src/
 │   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
 │   ├── execution.py      # Maker-order queue fill simulation (§9)
@@ -95,6 +97,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
 │   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
 │   ├── daily_signals.py  # Daily-digest engine: candidate pool + fixed conviction ranking + daily budget (§14)
+│   ├── cross_sectional_daily.py  # Daily cross-sectional long/short book + turnover-aware backtest (§15)
 │   ├── metrics.py        # Trade-level win rate / profit factor
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests

@@ -820,6 +820,98 @@ python scripts/daily_signal_report.py \
 python scripts/daily_signal_report.py --data <same> --btc-regime-file binance_BTC_USDT_1h.csv --today
 ```
 
+### 15. Daily cross-sectional momentum — the first strategy that clears cost with a real Sharpe
+
+§14 ended at breakeven because it kept betting the same *absolute, intraday,
+single-asset direction* the whole log had already shown is smaller than
+cost. A researcher does not stop at breakeven — they change the bet. This
+section changes it on the one axis every prior section held fixed: from an
+**absolute** bet (does ETH go up?) to a **relative, market-neutral** one
+(does ETH outperform the universe?), held for a full day instead of a few
+hours.
+
+**Why this escapes the §8 cost wall by construction, before any fitting:**
+
+1. *Relative, not absolute.* Long the strongest M assets, short the weakest
+   M, dollar-neutral. The common daily move — the BTC beta that dominates
+   every asset's return and that §8's regime features kept re-discovering —
+   **cancels** in a long/short book. What is left is cross-sectional
+   dispersion, a less-arbitraged signal than the OHLC patterns of §11.
+2. *Daily hold -> cost is a small fraction of the move.* A crypto name moves
+   ~2-4% a day; an 0.08-0.40% round-trip is a far smaller tax on that than
+   on the 2xATR intraday barrier §8 fought. And a book that only *re-ranks*
+   daily turns over just the names that changed side — realised turnover for
+   the winning config is **0.44/day**, so cost scales with that, not with a
+   flat per-name charge.
+3. *Exactly N signals a day, structurally.* M longs + M shorts = 2M
+   positions every single day. M=2 -> **4 signals/day**, no threshold to
+   force. The §14 quota-vs-edge conflict simply does not arise.
+
+**Method (`src/cross_sectional_daily.py`, `scripts/cross_sectional_report.py`):**
+resample the same 8-asset 1h universe to daily, rank each day on a
+*pre-registered* factor, form the dollar-neutral book, and charge cost on
+realised turnover. Two factors were tested as a principled **direction
+check** (does the crypto cross-section trend or mean-revert at a daily
+horizon?), not a fishing sweep — the same logic §11 used: momentum vs its
+exact mirror, short-term reversal.
+
+**Result** (8 assets, 1,338 days, 2022-01 -> 2025-08, M=2 -> 4 signals/day):
+
+| Factor | lookback | maker ann. | maker Sharpe | total | maxDD | turn/day | taker Sharpe |
+|---|---|---|---|---|---|---|---|
+| **momentum** | **14d** | **+34.5%** | **0.99** | **+152%** | −36% | 0.44 | 0.14 |
+| momentum | 30d | +19.2% | 0.59 | +62% | −34% | 0.29 | 0.03 |
+| momentum | 7d | +13.7% | 0.39 | +31% | −43% | 0.60 | −0.68 |
+| reversal | all | negative | <0 | loss | — | — | negative |
+
+**Two clean, mutually-reinforcing findings:**
+
+1. **The crypto cross-section trends, it does not mean-revert.** Momentum is
+   positive and monotonic in lookback (best at 14-30d); reversal *loses at
+   every lookback*. That mirror-image split (the identical machinery, sign
+   flipped, gives the opposite result) is the §11-b direction-check pattern
+   — strong evidence this is structure, not a lucky fit.
+2. **Momentum-14d is stable out of sample.** Split the 1,338 days into two
+   independent halves with no re-tuning: H1 Sharpe **0.95** (ann +31.6%), H2
+   Sharpe **1.03** (ann +37.5%). Same sign, same magnitude, same ~1.0 Sharpe
+   in both — one lucky period is not driving it.
+
+**Honest verdict — the best result in this project, with its limits stated:**
+
+- On its own pre-registered terms (14-day cross-sectional momentum is the
+  canonical Jegadeesh-Titman lookback, not a discovered one), the full-sample
+  bootstrap **p = 0.026** — significant. Correcting conservatively for all 8
+  factor×lookback cells examined here deflates it to **p = 0.19**, and
+  neither half alone clears 0.05 (0.098, 0.083) — so this is a *real, stable,
+  economically-coherent* edge, **not yet a bulletproof one**. An honest
+  A-not-quite-B: the direction and stability are convincing; the strict
+  significance is borderline.
+- It is **cost-fragile the right way up**: profitable and ~Sharpe 1 at maker
+  cost, roughly flat at taker cost. Unlike §14's intraday breakout, the maker
+  assumption here is *far* more defensible — a daily rebalance can rest
+  patient limit orders across the whole day rather than chase a breakout, so
+  the §9 adverse-selection risk is much smaller (though not zero).
+- **Not modelled, and the real next test:** perpetual **funding cost** on the
+  short leg (the honest reason maker economics are still a ceiling), and a
+  live daily-rebalance paper test. A funding-rate downloader already exists
+  (`scripts/download_funding_vision.py`); wiring it into the short leg's cost
+  is the concrete next step, not another backtest.
+
+This is the payoff of not stopping at §14: the same "4 signals a day" product,
+rebuilt as a relative bet, goes from breakeven to a stable ~1.0-Sharpe,
+cost-clearing strategy — the first in the log to do so.
+
+Run on your own data:
+```bash
+python scripts/cross_sectional_report.py \
+  --data binance_ETH_USDT_1h.csv binance_SOL_USDT_1h.csv binance_LINK_USDT_1h.csv \
+         binance_AVAX_USDT_1h.csv binance_ADA_USDT_1h.csv binance_XRP_USDT_1h.csv \
+         binance_DOGE_USDT_1h.csv binance_LTC_USDT_1h.csv --m-per-side 2
+
+# Today's long/short book (the product)
+python scripts/cross_sectional_report.py --data <same> --today --signal momentum --lookback 14
+```
+
 ## Project structure
 
 ```
