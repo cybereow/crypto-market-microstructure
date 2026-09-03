@@ -71,7 +71,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", nargs='+', required=True)
-    p.add_argument("--m-per-side", type=int, default=3)
+    p.add_argument("--m-per-side", type=int, default=5,
+                   help="Longs+shorts per side. Scale with the universe to hold roughly a "
+                        "top/bottom quartile (M=5 for ~20 assets); see §16.")
     p.add_argument("--mom-lb", type=int, default=14)
     p.add_argument("--carry-weight", type=float, default=0.3)
     p.add_argument("--vol-lookback", type=int, default=20)

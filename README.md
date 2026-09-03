@@ -65,6 +65,7 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
 | §14 | "3-4 signals/day" digest: a fixed, unfitted conviction score ranks a wide candidate pool and spends a daily budget on the best. The ranking has real power (permutation p=0.0002) — but only at a selectivity the daily quota forbids; forcing 4/day dilutes it to a loss | Frequency solved, **profit not** — breakeven at maker cost, loses at taker |
 | §15 | Daily **cross-sectional momentum** (long strongest / short weakest, dollar-neutral, 4 signals/day): +32.3%/yr and Sharpe 0.94 at maker cost **after real funding cost**, stable in both out-of-sample halves (0.95 / 1.03); reversal loses everywhere (clean direction check). Pre-registered p=0.026, deflated to 0.24 | **Best result** — real, stable, cost- and funding-clearing edge; strict significance still borderline |
+| §16 | Improving §15: a **20-asset, quartile-breadth (M=5, 10 signals/day)** momentum book keeps Sharpe ~1.07 but **halves max drawdown (−36%→−18%)**, stable OOS (0.98/1.14). Vol-targeting was ~neutral; a funding-**carry** factor helped narrow books but hurt broad ones (not robust) | Diversification is the real win (smoother book); the clever factors didn't hold up — and taker is still flat |
 
 ## Project layout
 
@@ -88,7 +89,8 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
 │   ├── backtest_grid.py                # Grid trading backtest
 │   ├── daily_signal_report.py         # "3-4 signals/day" digest: rank a wide pool, spend a daily budget (§14)
-│   └── cross_sectional_report.py      # Daily cross-sectional long/short momentum — the §15 result
+│   ├── cross_sectional_report.py      # Daily cross-sectional long/short momentum — the §15 result
+│   └── cross_sectional_v2.py          # §16 ablation: wider universe + vol-targeting + carry factor
 ├── src/
 │   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
 │   ├── execution.py      # Maker-order queue fill simulation (§9)

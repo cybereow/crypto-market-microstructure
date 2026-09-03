@@ -927,6 +927,75 @@ python scripts/cross_sectional_report.py \
 python scripts/cross_sectional_report.py --data <same> --today --signal momentum --lookback 14
 ```
 
+### 16. Improving the §15 book — what actually helped (diversification) and what didn't (carry, vol-targeting)
+
+§15 left a real but bumpy edge: maker Sharpe 0.94 on 8 assets, but a −36%
+max drawdown. This section tests three standard, *unfitted* portfolio-
+construction levers as an ablation, so each one's real contribution is
+measured rather than assumed — and reports the two that did **not** hold up
+as honestly as the one that did.
+
+**Method (`src/cross_sectional_daily.py`, `scripts/cross_sectional_v2.py`):**
+same daily cross-sectional momentum, now with (1) a wider 20-asset universe,
+(2) optional 1/vol position sizing (risk parity within each leg), and (3) an
+optional funding-**carry** factor (long low/negative-funding names, short
+high-funding ones) z-scored and blended with momentum. Everything graded at
+maker AND taker cost with real funding P&L, bootstrap significance, and an
+out-of-sample half-split.
+
+**Lever 1 — wider universe, but breadth must scale with it.** The naive move
+(keep M=2 longs/shorts, just add assets) *hurt*: top-2 of 20 is the extreme
+±10% tail, which is noisier than the ±25% quartile that M=2 selected out of
+8. Sharpe fell 0.94 → 0.79. Scaling breadth to hold the quartile (M=5 of 20,
+= 10 signals/day) is the fix, and it is the one robust win in this section:
+
+| Book | signals/day | maker Sharpe | **max DD** | OOS halves (Sharpe) | defl_p |
+|---|---|---|---|---|---|
+| §15: 8 assets, M=2, momentum | 4 | 0.94 | **−36%** | 0.95 / 1.03 | 0.13 |
+| **§16: 20 assets, M=5, momentum** | 10 | **1.07** | **−18%** | **0.98 / 1.14** | **0.093** |
+
+Same ~1.0 Sharpe, but the drawdown is **halved** (−36% → −18%) and identical
+in both halves — the honest payoff of diversification is a *smoother* book,
+not a higher headline number. Full-sample bootstrap p = 0.024 (deflated 0.093
+for the handful of variants tried). At taker cost it is still ~flat — the §8
+wall is unmoved.
+
+**Lever 2 — vol-targeting: neutral-to-slightly-negative, not a free win.** On
+the wide book it moved Sharpe 1.07 → 0.98 (and on 8 assets, 0.94 → 0.97). It
+tidies risk contributions but does not reliably raise Sharpe here; reported
+as roughly neutral rather than sold as an improvement.
+
+**Lever 3 — carry: helps narrow books, hurts broad ones (so: not robust).**
+Blending a funding-carry factor *helped* the narrow 8-asset book (Sharpe 0.94
+→ 1.07, drawdown −36% → −28%) but *hurt* the wide 20-asset/M=5 book (1.07 →
+0.56). An honest inconsistency: carry is not a dependable additive factor at
+this horizon, and it also lifts turnover (0.41 → 0.59), which makes the taker
+economics strictly worse. Kept in the code, but **not** part of the
+recommended configuration.
+
+**Verdict.** The defensible improvement over §15 is diversification alone: a
+20-asset, quartile-breadth (M=5), equal-weight momentum book — **10 signals a
+day, Sharpe ~1.07, −18% max drawdown, stable out of sample, at maker cost.**
+The two cleverer ideas (vol-targeting, carry) did not survive as reliable
+wins across universe sizes, and saying so is the point — §7's lesson was that
+the ideas that look additive on one slice often are not. This does not beat
+the §8 cost wall (taker still ~flat); it makes the maker-cost book you would
+actually run materially smoother, which is the honest, incremental kind of
+progress this log is for.
+
+Run on your own data:
+```bash
+python scripts/cross_sectional_v2.py \
+  --data binance_ETH_USDT_1h.csv binance_SOL_USDT_1h.csv binance_LINK_USDT_1h.csv \
+         binance_AVAX_USDT_1h.csv binance_ADA_USDT_1h.csv binance_XRP_USDT_1h.csv \
+         binance_DOGE_USDT_1h.csv binance_LTC_USDT_1h.csv binance_BNB_USDT_1h.csv \
+         binance_DOT_USDT_1h.csv binance_ATOM_USDT_1h.csv binance_UNI_USDT_1h.csv \
+         binance_AAVE_USDT_1h.csv binance_ETC_USDT_1h.csv binance_XLM_USDT_1h.csv \
+         binance_FIL_USDT_1h.csv binance_TRX_USDT_1h.csv binance_BCH_USDT_1h.csv \
+         binance_NEAR_USDT_1h.csv binance_ALGO_USDT_1h.csv \
+  --m-per-side 5 --mom-lb 14 --carry-weight 0.3 --ablation
+```
+
 ## Project structure
 
 ```
