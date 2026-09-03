@@ -996,6 +996,74 @@ python scripts/cross_sectional_v2.py \
   --m-per-side 5 --mom-lb 14 --carry-weight 0.3 --ablation
 ```
 
+### 17. Attacking the taker wall directly — turnover, and the first taker-cost-positive book
+
+Every result from §8 onward shares one verdict at realistic **taker** cost:
+flat or losing. §14-16 all clear only the optimistic **maker** floor. This
+section attacks the wall head-on. The wall is cost, and cost = per-trade
+friction × turnover. §16 could not lower the friction; this section lowers
+the **turnover**.
+
+**The lever.** A 14-day momentum signal does not change much day to day, so
+rebalancing the book *daily* pays cost far more often than the signal
+justifies. Rebalancing every N days cuts turnover ~N-fold. The signal is
+14 days old either way — the question is purely whether the cost saved
+exceeds the signal decay from holding staler ranks.
+
+**The honesty trap I walked into, and out of.** Rebalancing the whole book
+every N days on one fixed schedule looked great — taker Sharpe **0.89** at
+N=10. But sweeping the rebalance *phase* (which day of the 10 you start on)
+exposed it: across the 10 possible offsets, taker Sharpe ran **0.17 to 0.91**
+(mean 0.51). The 0.89 was a lucky phase — exactly the kind of single-number
+mirage §7 exists to catch. The fix is the canonical **overlapping
+(Jegadeesh-Titman laddered) portfolio**: run all N phases at once and hold
+their average, i.e. refresh 1/N of the book each day. That keeps turnover low
+AND is phase-independent by construction — no offset is privileged.
+
+**Result** (20 assets, M=5, momentum, overlapping rebalance, real funding,
+`overlap_rebalance` in `cross_sectional_daily.py`):
+
+| Rebalance | turnover/day | maker Sharpe | **taker Sharpe** | taker ann. | max DD |
+|---|---|---|---|---|---|
+| daily (§16) | 0.41 | 1.08 | **0.10** (the §8 wall) | +2.5% | −18% |
+| **overlapping 14d** | **0.10** | **1.06** | **0.68** | **+13.1%** | −18% |
+
+**Turnover reduction is the first thing in this entire log to move the taker
+number.** Cutting rebalancing from daily to a phase-independent 14-day ladder
+drops turnover 4x and lifts the taker Sharpe from ~0 to **~0.68** (+13%/yr),
+while barely touching the maker Sharpe (~1.0) — the maker book was never
+turnover-limited, the taker book always was. This is the honest mechanism §8
+pointed at from the start: "longer holding — cost is fixed, so a larger
+per-trade edge covers it."
+
+**The limits, stated plainly:**
+
+- **Time-concentrated.** Split into halves, the taker edge lives in the
+  second (2024-25): H1 Sharpe ≈ 0.0, H2 ≈ 1.1. Full-sample taker
+  significance is therefore only borderline (bootstrap p ≈ 0.13, deflated
+  ~0.33 for the rebalance intervals tried). Maker is significant (p=0.035);
+  taker is *positive but not yet proven*. Cross-sectional dispersion was
+  simply richer in the back half of the sample.
+- **Still an optimistic cost.** 0.40% taker is the honest retail number, but
+  it assumes clean fills on 20 names every fortnight; a live test is the only
+  way to confirm the +13% survives real execution.
+
+**Where this leaves the project.** §8 framed the taker wall as the thing no
+amount of modelling could beat. It turns out one thing beats it — not a
+better signal, but trading the same signal *less often*. The result is a
+20-asset, quartile-breadth, 14-day-laddered momentum book that is **positive
+after full retail taker cost (Sharpe ~0.7, +13%/yr, −18% drawdown)** and
+significant at maker cost — the first in this log to clear taker at all. It
+is a modest, regime-dependent edge, not a windfall, and its taker
+significance is still borderline — but the wall that stood from §8 to §16 now
+has a real crack in it, made by turnover, not cleverness.
+
+Run on your own data (add `--rebalance-days 14` to the §16 command):
+```bash
+python scripts/cross_sectional_v2.py --data <20 1h csvs> \
+  --m-per-side 5 --mom-lb 14 --carry-weight 0.0 --rebalance-days 14 --ablation
+```
+
 ## Project structure
 
 ```

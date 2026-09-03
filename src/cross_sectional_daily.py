@@ -107,6 +107,30 @@ def long_short_book(feature: pd.DataFrame, m_per_side: int) -> pd.DataFrame:
     return weights
 
 
+def overlap_rebalance(weights: pd.DataFrame, rebalance_days: int) -> pd.DataFrame:
+    """Turn a daily target-weight panel into a Jegadeesh-Titman *overlapping*
+    (laddered) portfolio rebalanced every `rebalance_days` days.
+
+    Why: rebalancing the whole book every N days cuts turnover ~N-fold — the
+    only lever that touches taker cost (§8) — but the result then depends on
+    *which* day you happen to rebalance on (a lucky vs unlucky phase). The
+    canonical fix is to run N sub-portfolios, each rebalanced every N days at
+    a staggered start offset, and hold their average: equivalently, refresh
+    1/N of the book each day. That keeps turnover low AND is phase-independent
+    by construction — no offset is privileged. Dollar-neutrality and unit
+    gross exposure are preserved (an average of neutral, unit-gross books).
+
+    `rebalance_days <= 1` returns the input unchanged (daily rebalancing)."""
+    if rebalance_days <= 1:
+        return weights
+    acc = None
+    for off in range(rebalance_days):
+        kept = weights.iloc[off::rebalance_days]
+        ffilled = kept.reindex(weights.index, method='ffill').fillna(0.0)
+        acc = ffilled if acc is None else acc + ffilled
+    return acc / rebalance_days
+
+
 def backtest_long_short(close_panel: pd.DataFrame, weights: pd.DataFrame,
                         cost_per_side: float) -> pd.DataFrame:
     """Daily net P&L of the weight panel.

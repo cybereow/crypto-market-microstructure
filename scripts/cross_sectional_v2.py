@@ -29,7 +29,7 @@ from src.config import OUTPUT_DIR
 from src.cross_sectional_daily import (
     resample_daily, build_close_panel, cross_sectional_feature, composite_feature,
     long_short_book, vol_target_book, backtest_long_short, apply_funding,
-    daily_funding_panel, realized_vol_panel, equity_stats,
+    daily_funding_panel, realized_vol_panel, equity_stats, overlap_rebalance,
 )
 from src.significance import bootstrap_mean_pvalue, deflated_pvalue
 
@@ -77,6 +77,10 @@ def main():
     p.add_argument("--mom-lb", type=int, default=14)
     p.add_argument("--carry-weight", type=float, default=0.3)
     p.add_argument("--vol-lookback", type=int, default=20)
+    p.add_argument("--rebalance-days", type=int, default=1,
+                   help="Overlapping (Jegadeesh-Titman laddered) rebalance interval. >1 cuts "
+                        "turnover ~N-fold — the lever that reaches taker cost (§17). Phase-"
+                        "independent. Default 1 = daily.")
     p.add_argument("--taker-cost", type=float, default=0.004)
     p.add_argument("--maker-cost", type=float, default=0.0008)
     p.add_argument("--ablation", action='store_true')
@@ -94,6 +98,17 @@ def main():
 
     mom = cross_sectional_feature(panel, 'momentum', args.mom_lb)
     comp = composite_feature(panel, fund_panel, args.mom_lb, args.carry_weight)
+    rb = args.rebalance_days
+
+    def book(feature, vol=None):
+        """Build the long/short book and apply the overlapping rebalance."""
+        w = vol_target_book(feature, args.m_per_side, vol) if vol is not None \
+            else long_short_book(feature, args.m_per_side)
+        return overlap_rebalance(w, rb)
+
+    if rb > 1:
+        print(f"  Rebalance: overlapping (laddered) every {rb} days — phase-independent, "
+              f"low turnover (§17).\n")
     N_CONF = 4  # a handful of a-priori variants examined; deflate for them.
 
     hdr = f"  {'configuration':<34}{'ann':>9}{'Sharpe':>8}{'total':>8}{'maxDD':>8}{'hit%':>7}{'turn':>8}{'defl_p':>9}"
@@ -103,10 +118,10 @@ def main():
         print(hdr); print('  ' + '-'*91)
         if args.ablation:
             row("1) momentum, equal-weight (§15)",
-                evaluate(panel, long_short_book(mom, args.m_per_side), fund_panel, cps, N_CONF, days))
+                evaluate(panel, book(mom), fund_panel, cps, N_CONF, days))
             row("2)  + vol-targeting",
-                evaluate(panel, vol_target_book(mom, args.m_per_side, vol_panel), fund_panel, cps, N_CONF, days))
-        final = evaluate(panel, vol_target_book(comp, args.m_per_side, vol_panel), fund_panel, cps, N_CONF, days)
+                evaluate(panel, book(mom, vol_panel), fund_panel, cps, N_CONF, days))
+        final = evaluate(panel, book(comp, vol_panel), fund_panel, cps, N_CONF, days)
         row(f"3)  + carry (w={args.carry_weight}) [FINAL]", final)
         if label.startswith('MAKER'):
             final_maker = final

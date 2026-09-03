@@ -15,7 +15,7 @@ from src.cross_sectional_daily import (
     resample_daily, build_close_panel, cross_sectional_feature,
     long_short_book, backtest_long_short, equity_stats,
     daily_funding_panel, apply_funding,
-    composite_feature, vol_target_book, realized_vol_panel,
+    composite_feature, vol_target_book, realized_vol_panel, overlap_rebalance,
 )
 
 
@@ -200,6 +200,22 @@ def test_realized_vol_panel_is_point_in_time():
     vp = realized_vol_panel(closes, lookback=5)
     assert vp.iloc[:6].isna().all().all()   # lookback+shift undefined at start
     assert vp.iloc[10].notna().all()
+
+
+def test_overlap_rebalance_identity_and_neutrality():
+    # N=1 is a no-op; N>1 preserves dollar-neutrality and unit gross, and
+    # cuts turnover vs the daily book it is built from.
+    idx = pd.date_range('2023-01-01', periods=40)
+    feat = pd.DataFrame(np.random.default_rng(1).standard_normal((40, 6)),
+                        index=idx, columns=list('ABCDEF'))
+    w = long_short_book(feat, m_per_side=2)
+    assert overlap_rebalance(w, 1).equals(w)                 # identity at N=1
+    lad = overlap_rebalance(w, 5)
+    # Dollar-neutral each day (sum ~0) and gross <= 1.
+    assert lad.sum(axis=1).abs().max() < 1e-9
+    assert lad.abs().sum(axis=1).max() <= 1.0 + 1e-9
+    # Turnover strictly lower than the daily book (fewer changes per day).
+    assert lad.diff().abs().sum(axis=1).mean() < w.diff().abs().sum(axis=1).mean()
 
 
 def test_equity_stats_on_known_series():
