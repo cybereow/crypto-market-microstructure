@@ -16,6 +16,7 @@ from src.cross_sectional_daily import (
     long_short_book, backtest_long_short, equity_stats,
     daily_funding_panel, apply_funding,
     composite_feature, vol_target_book, realized_vol_panel, overlap_rebalance,
+    volatility_scale,
 )
 
 
@@ -216,6 +217,23 @@ def test_overlap_rebalance_identity_and_neutrality():
     assert lad.abs().sum(axis=1).max() <= 1.0 + 1e-9
     # Turnover strictly lower than the daily book (fewer changes per day).
     assert lad.diff().abs().sum(axis=1).mean() < w.diff().abs().sum(axis=1).mean()
+
+
+def test_volatility_scale_levers_up_calm_and_caps():
+    # A calm stretch (tiny vol) then a wild stretch (large vol). Vol-targeting
+    # must lever the calm days UP toward the cap and the wild days DOWN, using
+    # only trailing info (no lookahead), and never exceed the cap.
+    rng = np.random.default_rng(0)
+    calm = rng.normal(0, 0.001, 60)   # tiny volatility
+    wild = rng.normal(0, 0.05, 60)    # large volatility
+    r = pd.Series(np.concatenate([calm, wild]),
+                  index=pd.date_range('2023-01-01', periods=120))
+    scaled, lev = volatility_scale(r, target_ann_vol=0.20, lookback=20, cap=3.0)
+    assert (lev <= 3.0 + 1e-9).all()          # cap respected
+    assert lev.iloc[50] > lev.iloc[-1]        # calm levered higher than wild
+    # extra_leverage multiplies through.
+    scaled2, lev2 = volatility_scale(r, 0.20, 20, 3.0, extra_leverage=2.0)
+    assert np.allclose(lev2.to_numpy(), (lev * 2.0).to_numpy())
 
 
 def test_equity_stats_on_known_series():

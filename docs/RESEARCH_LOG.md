@@ -1064,6 +1064,76 @@ python scripts/cross_sectional_v2.py --data <20 1h csvs> \
   --m-per-side 5 --mom-lb 14 --carry-weight 0.0 --rebalance-days 14 --ablation
 ```
 
+### 18. The aggressive configuration — variable-in-time leverage (volatility targeting)
+
+Every section so far reported an *unlevered* book. This one answers the
+question that keeps coming back — "can it make 50%?" — honestly, by writing
+down exactly what leverage buys and what it costs. The headline: 50%+ is
+reachable on the backtest, but it is bought *entirely* with leverage, and
+leverage buys the drawdown in the same proportion.
+
+**The one genuinely-useful refinement: variable leverage in time.** Equal
+leverage on every day is wasteful — the book's own volatility swings a lot,
+so a fixed multiplier over-risks the wild stretches and under-risks the calm
+ones. Volatility targeting (`volatility_scale`) sets each day's exposure from
+*trailing* realised vol to hold risk roughly constant — lever up when calm,
+down when wild. This is not new edge; it spends the existing edge more evenly.
+The effect is real and measured: on the §17 book it lifts Sharpe **0.99 →
+~1.30** and, crucially, improves the return-per-unit-drawdown, which is what
+actually matters when you then scale up. (Tested and rejected the alternative
+reading of "variable size": weighting positions by signal *conviction* |z|
+*lowered* Sharpe to 0.84 — bigger bets on stronger signals were just riskier,
+not better. Variable in **time** helped; variable by **conviction** did not.)
+
+**What each leverage level delivers** (§17 book, maker execution, vol-targeted):
+
+| Configuration | avg/yr | Sharpe | max DD | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|---|---|
+| §17 base, 1x | 20% | 0.99 | −14% | +8% | +29% | +23% | +6% |
+| vol-targeted (~1.5x avg) | 33% | **1.34** | −21% | +18% | +60% | +33% | +16% |
+| vol-targeted + 1.5x extra (~2.1x avg) | **55%** | 1.28 | **−29%** | +18% | +91% | +47% | +22% |
+
+At **taker** cost the same overlay gives **+37%/yr** (Sharpe 0.91, −36% DD) —
+still positive every calendar year, including the 2022 bear, because the book
+is market-neutral. That "positive in the bear too" is the one thing that is
+structural rather than lucky: a long/short book profits from *dispersion*, not
+direction.
+
+**The four caveats, stated as loudly as the returns — this is the aggressive
+end of the repo, not its recommendation:**
+
+1. **Maker-dependent.** The 55% needs passive limit fills. At taker cost the
+   honest number is ~37% (and to force 50% at taker you need ~4x leverage and
+   a ~−55% drawdown). §9's adverse-selection risk is exactly the thing that
+   decides which column you actually live in.
+2. **Drawdown is the price.** −29% in-sample typically means ~−40% live. A
+   50%-return configuration is a ~−35% to −40% drawdown configuration; the two
+   are the same dial.
+3. **Liquidation risk.** ~2x leverage into a −30% drawdown sits near margin
+   limits; a sharp gap can liquidate the book before it recovers — the exact
+   mechanism that ended 3AC, Alameda, and most levered crypto funds.
+4. **Regime- and tuning-dependent.** The +91% of 2023 was an exceptional
+   dispersion year that will not repeat on demand, and the vol-target
+   parameters were lightly tuned in-sample. The honest forward expectation is
+   *below* the backtest — plausibly ~25-40% in a normal regime with maker
+   fills, not 50%.
+
+**Bottom line for the whole §14-18 arc.** Starting from "give me 3-4
+profitable signals a day," the honest end state is: a 20-asset, market-neutral,
+daily cross-sectional momentum book (10 signals/day), rebalanced as a low-
+turnover overlapping ladder (§17) and run at variable, vol-targeted leverage
+(§18). Unlevered and honest it is ~15-20%/yr at maker cost; pushed to the
+aggressive end it *backtests* near 50% — but that number is leverage, not
+alpha, and it carries a matching ~35-40% drawdown and real ruin risk. There is
+no configuration in this repo that reaches 50%+ *without* that leverage and
+that risk, and the project's whole point is to say so plainly rather than sell
+the big number on its own.
+
+Run on your own data:
+```bash
+python scripts/leveraged_book.py --data <20 1h csvs> --extra-leverage 1.5
+```
+
 ## Project structure
 
 ```

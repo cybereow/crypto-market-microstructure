@@ -272,6 +272,30 @@ def apply_funding(bt: pd.DataFrame, weights: pd.DataFrame,
     return out
 
 
+def volatility_scale(net_returns: pd.Series, target_ann_vol: float = 0.20,
+                     lookback: int = 30, cap: float = 3.0,
+                     extra_leverage: float = 1.0):
+    """Variable leverage in *time*: scale each day's exposure so the book runs
+    at a roughly constant target volatility, levering up when the strategy has
+    been calm and down when it has been wild.
+
+    For a linear long/short book, multiplying the day's positions by a scalar
+    L multiplies that day's net return (gross AND cost) by L, so applying the
+    leverage to the net-return series is exact. The leverage is set from
+    *trailing* realized vol (shifted, no lookahead), capped at `cap`, and
+    multiplied by a constant `extra_leverage` to hit a chosen return target.
+
+    Returns (scaled_returns, leverage_series). This is the §18 lever — it
+    raised the §17 book's Sharpe from ~1.0 to ~1.3 because risk, not signal,
+    was being held constant. It does NOT create edge; it spends the existing
+    edge more evenly, which is why it helps drawdown per unit of return."""
+    r = net_returns.dropna()
+    target_daily = target_ann_vol / np.sqrt(365.0)
+    realized = r.rolling(lookback).std().shift(1)
+    lev = (target_daily / (realized + 1e-9)).clip(upper=cap).fillna(1.0) * extra_leverage
+    return r * lev, lev
+
+
 def equity_stats(daily_net: pd.Series, periods_per_year: int = 365) -> dict:
     """Summary stats for a daily net-return series."""
     r = daily_net.dropna()
