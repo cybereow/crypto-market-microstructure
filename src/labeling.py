@@ -221,6 +221,198 @@ def obi_momentum_entries(df: pd.DataFrame, lookback: int = 288, obi_col: str = '
     return entries
 
 
+def funding_extreme_reversion_entries(df: pd.DataFrame, lookback: int = 90,
+                                       quantile: float = 0.90,
+                                       funding_col: str = 'funding_rate') -> pd.Series:
+    """Primary signal from perpetual-futures FUNDING RATE, not price action
+    or the order book: fade the crowd when funding sits at its own recent
+    extreme.
+
+    Rationale, and why this is a genuinely different bet from every other
+    signal in this repo (see scripts/download_funding_vision.py, which
+    already documents this hypothesis but had never been wired into an
+    actual entry rule until this function): funding is a periodic payment
+    from longs to shorts (when positive) or shorts to longs (when
+    negative), sized to keep the perpetual's price tracking spot. An
+    unusually high positive funding rate means longs are paying an
+    unusually large premium to stay long -- direct evidence of crowded,
+    leveraged long positioning, which is unusually exposed to a
+    liquidation cascade on any dip (the same mechanism behind "extreme
+    funding precedes local tops" being a standard piece of crypto-trading
+    lore). The symmetric case (extreme negative funding) is crowded
+    shorts, prone to a short-squeeze bounce. This is therefore a FADE
+    (mean-reversion) signal, the opposite direction from
+    `obi_momentum_entries`'s follow-the-pressure rule, despite the
+    similar "cross a rolling quantile" mechanics: -1 (short) fires when
+    funding crosses UP through its own rolling upper quantile (crowded
+    longs -> fade with a short); +1 (long) fires on the symmetric
+    downside cross (crowded shorts -> fade with a long).
+
+    `lookback` sets the window funding's own recent extremes are measured
+    against (default 90 bars = 15 days at 4h), so "extreme" adapts to
+    each period's prevailing funding regime (which shifts with the
+    market's overall bull/bear structure) instead of a fixed absolute
+    cutoff.
+    """
+    funding = df[funding_col]
+    upper = funding.rolling(lookback).quantile(quantile).shift(1)
+    lower = funding.rolling(lookback).quantile(1 - quantile).shift(1)
+    prev = funding.shift(1)
+
+    entries = pd.Series(0, index=df.index)
+    entries[(prev <= upper) & (funding > upper)] = -1
+    entries[(prev >= lower) & (funding < lower)] = 1
+    return entries
+
+
+def funding_reversion_confirmed_entries(df: pd.DataFrame, lookback: int = 90,
+                                         quantile: float = 0.90,
+                                         funding_col: str = 'funding_rate',
+                                         bb_col: str = 'bb_position',
+                                         bb_threshold: float = 0.5) -> pd.Series:
+    """`funding_extreme_reversion_entries` (section 14 of the research log,
+    p=0.112 -- real but short of significant on its own), restricted to
+    bars where price ALSO independently confirms the crowding thesis:
+    price extended in the SAME direction being faded (`bb_position` past
+    `bb_threshold`), not just funding.
+
+    Rationale: funding alone is real but noisy -- a funding spike can be
+    transient without genuine price overextension behind it. Requiring a
+    second, independent signal FAMILY (price/Bollinger extension, not
+    another funding-derived number) to agree before taking the trade is
+    the same "combine independent weak signals" logic behind this
+    project's meta-labeling approach (sections 5-7), just expressed as an
+    explicit conjunctive rule instead of a fitted classifier -- cheaper to
+    test, easier to reason about, and not vulnerable to overfitting a
+    training split the way a classifier is. `bb_position` (from
+    scripts/train_ml.create_features) is centred at 0 and spans roughly
+    [-1, +1]: a short (fading crowded longs) additionally requires
+    `bb_position > bb_threshold` (price already pushed up through its own
+    upper band); a long requires the symmetric downside extension.
+    """
+    base = funding_extreme_reversion_entries(df, lookback=lookback, quantile=quantile,
+                                              funding_col=funding_col)
+    bb = df[bb_col]
+
+    entries = pd.Series(0, index=df.index)
+    entries[(base == -1) & (bb > bb_threshold)] = -1
+    entries[(base == 1) & (bb < -bb_threshold)] = 1
+    return entries
+
+
+def funding_reversion_regime_filtered_entries(df: pd.DataFrame, lookback: int = 90,
+                                               quantile: float = 0.90,
+                                               funding_col: str = 'funding_rate',
+                                               atr_ratio_col: str = 'ATR_ratio',
+                                               atr_ratio_max: float = 1.05) -> pd.Series:
+    """`funding_extreme_reversion_entries` (section 14, p=0.112 pooled;
+    section 19's walk-forward found it recurs across two separate
+    non-adjacent stretches but fails during a cascading-liquidation crash
+    regime -- 2022-03 to 2023-04, spanning Terra/Luna, 3AC, FTX), gated by
+    the SAME volatility-expansion guard `range_fade_entries` already uses
+    for the identical reason (mean-reversion loses to a genuinely
+    trending/cascading move once volatility is expanding, not merely
+    elevated). Deliberately reuses `range_fade_entries`'s existing
+    `atr_ratio_max=1.05` cutoff rather than fitting a new threshold to
+    this specific result -- a threshold chosen BECAUSE it makes this
+    signal's p-value look better would be exactly the kind of search
+    `src.significance.deflated_pvalue` exists to catch, not a validated
+    regime filter.
+
+    Rationale for WHY this specific regime should matter here: a cascading
+    liquidation event is exactly when funding can stay pinned at an
+    extreme for an extended stretch without the "crowded position"
+    unwinding the way the fade thesis assumes -- forced, sequential
+    liquidations keep pushing price the SAME direction funding already
+    signals, rather than snapping back. Short-horizon-expanding ATR is a
+    reasonable proxy for "market is in exactly that kind of dislocation
+    right now," independent of the funding number itself.
+    """
+    base = funding_extreme_reversion_entries(df, lookback=lookback, quantile=quantile,
+                                              funding_col=funding_col)
+    not_expanding = df[atr_ratio_col] < atr_ratio_max
+
+    entries = pd.Series(0, index=df.index)
+    entries[(base != 0) & not_expanding] = base[(base != 0) & not_expanding]
+    return entries
+
+
+def obv_divergence_entries(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
+    """Primary signal: fade a price breakout that volume flow doesn't confirm.
+
+    Rationale: on-balance volume (OBV, a running sum of each bar's volume
+    signed by that bar's price direction) is meant to track buying/selling
+    PRESSURE behind a move, not the price move itself. When price prints a
+    new `lookback`-bar high but OBV does NOT also print a new
+    `lookback`-bar high, the rally is happening without proportional
+    volume behind it -- classic bearish divergence, and evidence the move
+    is thinner/more exhausted than the price chart alone suggests. The
+    symmetric case (a new price low without a new OBV low) is bullish
+    divergence. Like `funding_extreme_reversion_entries`, this is
+    therefore a FADE signal -- but built from this asset's OWN volume
+    flow rather than perpetual-futures positioning, so it's a third,
+    independent bet alongside funding and OBI (order-book imbalance,
+    section 11): three different alt-data sources testing the same
+    underlying idea (crowd positioning/participation, not price history
+    alone, is where an edge might still be findable) from three different
+    angles.
+
+    Mirrors `donchian_breakout_entries`'s no-lookahead convention exactly
+    (compare the current bar against the PRIOR `lookback` bars' extreme,
+    via `.shift(1)`) so a "new high/low" here means the same thing it
+    means everywhere else in this repo.
+    """
+    obv = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+
+    prior_price_high = df['close'].rolling(lookback).max().shift(1)
+    prior_price_low = df['close'].rolling(lookback).min().shift(1)
+    prior_obv_high = obv.rolling(lookback).max().shift(1)
+    prior_obv_low = obv.rolling(lookback).min().shift(1)
+
+    price_breaks_high = df['close'] > prior_price_high
+    price_breaks_low = df['close'] < prior_price_low
+    obv_confirms_high = obv > prior_obv_high
+    obv_confirms_low = obv < prior_obv_low
+
+    entries = pd.Series(0, index=df.index)
+    entries[price_breaks_high & ~obv_confirms_high] = -1
+    entries[price_breaks_low & ~obv_confirms_low] = 1
+    return entries
+
+
+def btc_lead_lag_entries(df: pd.DataFrame, threshold: float = 0.03,
+                          btc_ret_col: str = 'btc_ret_5') -> pd.Series:
+    """Primary signal: BTC's own recent momentum, traded on a DIFFERENT
+    asset (an altcoin) -- a cross-asset lead-lag bet, structurally unlike
+    every other signal in this repo (all of which condition only on the
+    traded asset's own price/volume/positioning history).
+
+    Rationale: BTC is crypto's dominant liquidity venue and the asset
+    most capital flows through first; altcoins routinely play "catch up"
+    with a short lag rather than moving in perfect lockstep, so a strong
+    BTC move not yet mirrored in an altcoin's own price is a candidate
+    signal that the alt hasn't finished repricing. +1 (long) fires the
+    bar BTC's trailing return crosses UP through `threshold`; -1 (short)
+    on the symmetric downside cross. Fires on the CROSSING bar only (like
+    `obi_momentum_entries`/`funding_extreme_reversion_entries`), not
+    every bar the condition holds, so a sustained BTC move doesn't spawn
+    one overlapping candidate per bar.
+
+    `df` must already carry `btc_ret_col` -- BTC's own trailing return,
+    reindexed onto this asset's own timestamps and forward-filled. Reuses
+    `src.regime.build_btc_regime`'s `btc_ret_5` column by default rather
+    than recomputing BTC's return from scratch (see
+    scripts/backtest_btc_lead_lag.py for how the join is built).
+    """
+    btc_ret = df[btc_ret_col]
+    prev = btc_ret.shift(1)
+
+    entries = pd.Series(0, index=df.index)
+    entries[(prev <= threshold) & (btc_ret > threshold)] = 1
+    entries[(prev >= -threshold) & (btc_ret < -threshold)] = -1
+    return entries
+
+
 def triple_barrier_labels(df: pd.DataFrame, entries: pd.Series, atr: pd.Series,
                            pt_mult: float = 1.5, sl_mult: float = 1.0,
                            max_holding: int = 18) -> pd.DataFrame:

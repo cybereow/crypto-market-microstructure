@@ -1134,6 +1134,403 @@ Run on your own data:
 python scripts/leveraged_book.py --data <20 1h csvs> --extra-leverage 1.5
 ```
 
+### 19. Funding-rate-extreme reversion — a genuinely new alt-data signal, close but not significant
+
+`scripts/download_funding_vision.py`'s own docstring had stated a hypothesis
+since early in this project — extreme positive perpetual-futures funding
+(longs paying shorts an unusually large premium) has historically preceded
+local tops, and vice versa — but nothing had ever turned it into an actual
+entry rule and tested it. `src.labeling.funding_extreme_reversion_entries`
+does: **fade** the crowd (short when funding crosses up through its own
+rolling 90-bar/15-day 90th percentile; long on the symmetric downside
+cross), the opposite direction from `obi_momentum_entries`'s
+follow-the-pressure rule despite similar quantile-crossing mechanics.
+
+This is a genuinely different data source from every other signal in this
+project except OBI (section 11): it comes from the perpetual funding
+mechanism, not price/volume history, so it isn't already priced into the
+technical indicators every other participant is also computing.
+
+**Result, pooled across BTC/ETH/SOL perpetual futures, full available
+history (2020-01-01 to 2026-07-31, 4h bars):**
+
+| | n | win rate | PF | exp/trade | p-value |
+|---|---|---|---|---|---|
+| TAKER (instant fill, 0.40% cost) | 2439 | 51.7% | 0.87 | −0.29% | 0.998 |
+| MAKER (simulated fill, 88.8% fill rate, 0.08% cost) | 2167 | 52.2% | 1.07 | **+0.14%** | **0.112** |
+
+Same pattern as section 8→9 (taker cost kills it, maker cost recovers a
+positive expectancy) — but unlike section 9's 0.08%-cost result (p=0.03 at
+one config, which then failed a robustness sweep at p=0.115), this one
+starts already short of the p<0.05 bar on its first, single, a-priori
+test — no sweep, no cherry-picked configuration. **Verdict: promising, but
+not (yet) significant.** Positive point estimate on a real, fairly large
+sample (2167 filled trades across three assets and six years) is a
+genuinely different outcome from the outright-null OBI result (section 11)
+or market-making's structural rejection (section 13) — but "close to 0.05"
+is not "under 0.05," and this repo does not round that corner.
+
+Run on your own data:
+```bash
+python scripts/download_klines_vision.py --symbol BTCUSDT --timeframe 4h --market futures --start-date 2020-01-01
+python scripts/download_funding_vision.py --symbol BTCUSDT --start-date 2020-01-01 --end-date 2026-07-31
+# ...repeat for ETHUSDT, SOLUSDT...
+
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
+```
+
+### 20. OBV divergence — null, and the maker-cost edge is adverse-selected away
+
+Two more independent-data-source ideas were tested alongside funding
+(section 19), each from a different angle on the same underlying
+question (is crowd positioning/participation, not price history alone,
+where an edge might still be findable): `src.labeling.obv_divergence_entries`
+fades a price breakout that on-balance volume (a running sum of volume
+signed by price direction) doesn't confirm — a new N-bar price high
+without a new N-bar OBV high is thin, unconvincing buying pressure behind
+the move (and the symmetric case for a price low).
+
+**Result, pooled across BTC/ETH/SOL perpetual futures, full history:**
+2824 candidates, taker PF 0.85 (p=0.9995), maker PF 1.02 (p=0.3328) —
+already not significant on the point estimate alone. Worse: the
+adverse-selection check this repo runs on every maker-fill result (README
+section 9) shows the trades that FAILED to fill would have won 76.4% of
+the time (taker basis) versus 46.5% for the ones that did fill — a +29.9
+point gap. **The small maker-cost PF is not a real edge; it's what's left
+after the winning setups get away before the passive limit order can
+reach them.** Verdict: **Null**, and instructively so — this is the same
+failure mode section 9's own general caveat warns about, caught directly
+by this repo's existing adverse-selection tooling on the first run.
+
+```bash
+python scripts/backtest_maker_fill.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --signal obv_divergence --pt-mult 2.0 --sl-mult 2.0
+```
+
+### 21. BTC-lead-lag on altcoins — null
+
+The third angle: does BTC's own recent momentum, traded on a DIFFERENT
+asset (ETH, SOL), carry an edge — a cross-asset lead-lag bet, betting an
+altcoin hasn't fully "caught up" to a strong BTC move yet? Structurally
+unlike every other signal in this repo, which conditions only on the
+traded asset's own history; `src.labeling.btc_lead_lag_entries` reuses
+`src.regime.build_btc_regime`'s already-tested `btc_ret_5` column
+(previously only used as a meta-labeling gate feature, never as a primary
+signal in its own right).
+
+**Result, pooled across ETH+SOL perpetual futures vs. BTC, full history,
+threshold=+/-3% on BTC's trailing 5-bar return:** 1930 candidates, taker
+PF 0.87 (p=0.9932), maker PF 0.97 (p=0.7207) — expectancy is NEGATIVE even
+at maker cost. **Verdict: Null.** No adverse-selection games needed here;
+the point estimate itself never gets close to break-even.
+
+```bash
+python scripts/backtest_btc_lead_lag.py \
+  --data binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --btc-data binance_futures_BTC_USDT_4h.csv
+```
+
+**Where this leaves the three-alt-data-source sweep (sections 19-16):**
+funding-extreme-reversion is the only one of the three with a positive,
+sample-backed point estimate (still short of significance); OBV
+divergence and BTC-lead-lag are both null, one of them for an
+instructive, previously-documented reason (adverse selection) rather
+than a new one. Reporting all three, not just the promising one, is the
+point of this log — see section 7 for what happens when that discipline
+slips.
+
+### 22. LLM (Claude-API-shaped) approval gate — real money, real candidates, no evidence it helps
+
+The natural follow-up question to a project built with AI pair-programming:
+can an LLM itself serve as the trading decision-maker, not just the tool
+used to build one? `src/llm_decision.py` + `scripts/backtest_llm_gate.py`
+implement this as an approve/reject gate sitting on top of an EXISTING
+rule-based signal — never a live-execution bot, and explicitly *not* held
+to this repo's usual statistical bar going in (an LLM call is not
+deterministic, so it can't be scored with `src/significance.py` the way a
+fixed rule or fitted classifier can). This section reports what actually
+happened when that gate was run for real.
+
+**What was tested, with real API calls against real money, not a mock:**
+the gate first on `vol_breakout` candidates (essentially zero raw edge to
+begin with — not a fair test of the gate itself), then — the fairer
+test — on section 19's `funding_reversion` candidates, the one signal in
+this whole log with a positive, if not-yet-significant, point estimate on
+its own (maker PF 1.07, exp +0.14%, p=0.112 on 2167 filled trades). If an
+LLM gate can add real judgment, THIS is the pool where it has something
+to work with.
+
+**Full-history result, funding_reversion, 1508 real candidates, every one
+decided by a real API call:**
+
+| | ALL candidates (ungated) | LLM-approved |
+|---|---|---|
+| n | 1508 | **2** (0.13%) |
+| win rate (maker) | 52.1% | 50.0% |
+| PF (maker) | **1.06** | 0.48 |
+| exp/trade (maker) | **+0.10%** | **−2.02%** |
+| p-value | — | 0.74-0.76 |
+
+The gate approved 2 of 1508 candidates — functionally indistinguishable
+from "never trade." And the two it did approve were WORSE than the
+ungated pool's own average, not better: negative expectancy against a
+positive baseline. A smaller (n=30) run on the same signal/model showed
+the same pattern (1 approved, non-significant). **Verdict: no evidence
+this gate adds value** — not marginal, not promising-but-underpowered,
+just null, with the added specificity that an approval rate this low
+means the gate isn't discriminating between candidates so much as
+almost-always saying no regardless of what's in front of it.
+
+**What this can and cannot tell you:** this result is about one specific
+model reached through one specific API endpoint, with one specific
+prompt design (`src/llm_decision.py`'s `DECISION_SYSTEM_PROMPT`), on two
+specific signals. It is not a general claim that "LLMs can't trade" —
+only that THIS configuration, tested honestly with real spend rather than
+assumed to work, didn't. Rerunning against a different model is a
+legitimate next step; rerunning the same model with a reworded prompt
+until something looks better is not — that is exactly the pattern section
+7 already retracted once.
+
+```bash
+python scripts/backtest_llm_gate.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion --lookback 90 --pt-mult 2.0 --sl-mult 2.0
+```
+
+### 23. Price confirmation on top of funding reversion — moved further from significant, not closer
+
+Section 19's funding signal is real but short of significant (p=0.112).
+A natural, well-motivated next attempt, in the same spirit as this
+project's meta-labeling approach (combine independent weak signals) but
+expressed as a plain rule instead of a fitted classifier:
+`src.labeling.funding_reversion_confirmed_entries` restricts section 19's
+entries to bars where price ALSO independently confirms the crowding
+thesis (`bb_position` extended past +/-0.5 in the same direction being
+faded), instead of trusting funding alone.
+
+**Result, same full history, same three assets, single a-priori
+threshold (bb_threshold=0.5, no sweep):**
+
+| | funding_reversion (§19) | + price confirmation |
+|---|---|---|
+| candidates | 2439 | 926 (filtered to 38%) |
+| win rate (maker) | 52.2% | 51.6% |
+| PF (maker) | 1.07 | 1.04 |
+| exp/trade (maker) | +0.14% | +0.10% |
+| **p-value** | **0.112** | **0.310 — worse** |
+
+The filter did not sharpen the signal; it moved further from
+significance while cutting the sample by 62%. **Verdict: null — the
+"combine independent signals" instinct, reasonable on paper, didn't pay
+off here.** A plausible reason, not just a shrug: requiring price to
+already be extended before taking the trade likely selects the LATE part
+of each crowding move, after the cheaper/earlier part of the reversion
+has already happened — confirmation cost more opportunity than it added
+in precision. This is reported as a single test, not the first of a
+threshold sweep; trying several `bb_threshold` values until one clears
+p<0.05 would be exactly the multiple-testing trap section 7 already
+covers (`src.significance.deflated_pvalue` exists precisely so that kind
+of search is priced in if pursued, rather than reported as if it were a
+single a-priori result).
+
+```bash
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_confirmed
+```
+
+### 24. Is section 19's edge one lucky regime, or does it recur? — walk-forward stability check
+
+The pooled full-history p=0.112 (section 19) answers "is the AVERAGE
+distinguishable from zero" but not "is that average one strong stretch of
+calendar time carrying six years of otherwise-flat data." Unlike
+`scripts/backtest_meta_ml_walkforward.py` (which retrains a model per
+fold to prevent train/test leakage), `funding_extreme_reversion_entries`
+is a fixed rule with nothing to fit -- so `scripts/backtest_funding_reversion_walkforward.py`
+does something narrower but still real: split the identical maker-fill
+computation from section 19 into 6 sequential, non-overlapping,
+equal-WIDTH calendar chunks (~1 year each, 2020-2026) and report each
+chunk's economics independently, reusing section 19's own `run_asset` so
+this is a different SLICING of the same numbers, not a different
+computation.
+
+**Result, same three assets, same full history, same maker-fill
+methodology, single a-priori 6-fold split (no sweep):**
+
+| Fold | Period | n | win rate | PF | exp/trade | p |
+|---|---|---|---|---|---|---|
+| 1 | 2020-01 to 2021-02 | 271 | 54.6% | 1.24 | +0.69% | 0.070 |
+| 2 | 2021-02 to 2022-03 | 310 | 54.8% | 1.17 | +0.45% | 0.126 |
+| 3 | 2022-03 to 2023-04 | 348 | 49.4% | 0.80 | **−0.49%** | 0.960 |
+| 4 | 2023-04 to 2024-05 | 346 | 53.8% | 1.06 | +0.09% | 0.344 |
+| 5 | 2024-05 to 2025-06 | 395 | 52.9% | 1.30 | +0.48% | **0.016** |
+| 6 | 2025-06 to 2026-07 | 497 | 49.7% | 0.92 | **−0.13%** | 0.803 |
+
+4 of 6 folds positive net expectancy, 4 of 6 PF > 1.0. **This is not one
+lucky window carrying the pooled average** — the positive folds are two
+separate, non-adjacent stretches (2020-2022 and 2024-2025), one of them
+(fold 5) individually significant on its own (p=0.016) even before any
+pooling. But it is also not a stable, always-on edge: fold 3
+(2022-03 to 2023-04 — the "crypto winter" stretch spanning Terra/Luna,
+3AC, and FTX) and fold 6 (the most recent year) are both net-negative,
+fold 3 clearly so.
+
+**Verdict: mixed but recurring, not resolved either way.** A plausible
+(not yet tested) read: this fade-the-crowd mechanism may need an actual
+crowd to fade against consistently, which a grinding multi-quarter crash
+with cascading forced liquidations (fold 3) or a range-bound,
+low-conviction stretch (fold 6, tentatively) may not provide in the same
+way a clearer bull/consolidation regime does (folds 1, 2, 5). Testing
+that specific hypothesis — conditioning the signal on a regime filter,
+the same idea already applied to `trend_pullback_entries` and
+`range_fade_entries` in this repo — would be a legitimate next single
+a-priori test; running several regime-filter variants until one clears
+p<0.05 would not be (see section 23's closing note on
+`deflated_pvalue`).
+
+```bash
+python scripts/backtest_funding_reversion_walkforward.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion --n-folds 6
+```
+
+### 25. Regime-filtering the funding signal — the first result in this line to actually clear p<0.05
+
+Section 24's specific, stated hypothesis: the funding-reversion signal
+recurs across separate calendar stretches but fails specifically during
+a cascading-liquidation regime (fold 3, 2022-03 to 2023-04 — Terra/Luna,
+3AC, FTX), because forced sequential liquidations can keep pushing price
+the SAME direction funding already signals instead of it snapping back.
+`src.labeling.funding_reversion_regime_filtered_entries` tests this
+directly by gating the signal off whenever short-horizon volatility is
+expanding — reusing `range_fade_entries`'s EXISTING `ATR_ratio < 1.05`
+cutoff verbatim rather than fitting a new threshold to this result (a
+threshold chosen because it flatters this specific p-value would be
+exactly the search `deflated_pvalue` exists to catch, not a validated
+filter).
+
+**Pooled result, same three assets, same full 2020-2026 history:**
+
+| | funding_reversion (§19) | + regime filter |
+|---|---|---|
+| candidates | 2439 | 1456 (filtered to 60%) |
+| filled (maker) | 2167 | 1287 |
+| win rate (maker) | 52.2% | 53.5% |
+| PF (maker) | 1.07 | **1.15** |
+| exp/trade (maker) | +0.14% | **+0.26%** |
+| **p-value** | 0.112 | **0.0130** |
+
+**This is the first configuration in sections 19/18/20 to clear p<0.05 on
+the pooled test.** Correcting for the fact that this is the THIRD
+funding-signal configuration tried in this log (raw, price-confirmed,
+regime-filtered — `deflated_pvalue(0.013, 3)`): **p_deflated = 0.0385,
+still under 0.05.**
+
+**Walk-forward check, same 6 folds as section 24:**
+
+| Fold | Period | n | PF | exp/trade | p |
+|---|---|---|---|---|---|
+| 1 | 2020-01 to 2021-02 | 125 | 1.52 | +1.12% | **0.023** |
+| 2 | 2021-02 to 2022-03 | 199 | 1.43 | +0.90% | **0.009** |
+| 3 | 2022-03 to 2023-04 | 210 | 0.89 | −0.24% | 0.763 |
+| 4 | 2023-04 to 2024-05 | 203 | 1.34 | +0.40% | **0.033** |
+| 5 | 2024-05 to 2025-06 | 231 | 1.15 | +0.21% | 0.180 |
+| 6 | 2025-06 to 2026-07 | 319 | 0.88 | −0.19% | 0.845 |
+
+Still 4/6 folds positive — but now THREE of the four are individually
+significant on their own (folds 1, 2, 4), not just the pooled average.
+Fold 3's crash-period loss is smaller than section 24's unfiltered
+version (exp −0.24% vs −0.49%, PF 0.89 vs 0.80) but not eliminated — the
+filter reduced, rather than removed, the crash-regime drag, which is the
+honest expected outcome of a coarse volatility-expansion proxy applied
+to a genuinely chaotic multi-month stretch. Fold 6 (most recent year)
+remains negative and is not yet explained by the crowding-fade-fails
+hypothesis the way fold 3 is.
+
+**Verdict: the strongest result in this log's alt-data line, real but
+still bounded.** Not a proven, always-on edge — 2 of 6 folds still lose
+money, and every number here is still on the OPTIMISTIC maker-fill
+upper bound (README section 9's caveat: OHLC bars carry no real
+queue-position data). The honest next steps, if pursued, are (a) a live
+shadow paper-test against real quotes (the same `paper_test_live.py`
+pattern section 12 already established, adapted for this signal) to
+check whether the simulated fill rate and realized economics hold up
+against real order flow, not just historical OHLC, and (b) understanding
+fold 6's loss rather than assuming the regime story already explains
+everything.
+
+```bash
+python scripts/backtest_funding_reversion.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_regime_filtered
+
+python scripts/backtest_funding_reversion_walkforward.py \
+  --data binance_futures_BTC_USDT_4h.csv binance_futures_ETH_USDT_4h.csv binance_futures_SOL_USDT_4h.csv \
+  --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv \
+  --signal funding_reversion_regime_filtered --n-folds 6
+```
+
+### 26. Live shadow paper-test for the regime-filtered funding signal — collecting samples
+
+Section 25's exact next step, named there and built here:
+`scripts/paper_test_funding_live.py` is section 12's live-shadow pattern
+(poll real quotes, price a resting maker limit exactly like
+`src.execution.simulate_maker_fills`, zero capital ever at risk, no order
+ever sent) applied to `funding_reversion_regime_filtered_entries` instead
+of `vol_breakout`.
+
+Venue is Kraken Futures (`ccxt.krakenfutures`), for the same reason
+`paper_test_live.py` uses Kraken instead of Binance (Binance's futures
+API returns HTTP 451 from this environment's network egress — confirmed
+directly against `fapi.binance.com`, while `ccxt.krakenfutures` reached
+both `fetch_ohlcv` and `fetch_funding_rate_history` without issue).
+Disclosed, not silent, on TWO axes here rather than one: Kraken prices
+track Binance's closely but not exactly (already the case for
+`paper_test_live.py`), AND Kraken accrues funding roughly hourly at a
+much smaller per-observation magnitude than Binance's nominal 8h rate —
+confirmed directly (~1e-5 to 1e-6 on Kraken vs the ~1e-4 to 1e-2 range
+the historical Binance-based backtests in sections 19-20 used). This
+does not break the signal's mechanism (`funding_extreme_reversion_entries`
+only ever compares funding against its OWN rolling quantile, never an
+absolute magnitude), but it does mean the live-logged funding_rate
+values are on a different scale than the historical backtest data, and
+is exactly why this is an independent live check rather than a
+guaranteed replay of sections 19-20's numbers.
+
+`src.paper_trading.make_pending_order` was generalized to accept
+`pt_mult`/`sl_mult`/`offset_mult` overrides (previously hardcoded module
+constants tuned for `vol_breakout`) so this script could use
+funding_reversion's own geometry (2.0/2.0, matching
+`backtest_funding_reversion.py`) without touching `paper_test_live.py`'s
+existing behavior or its tests.
+
+Verified end to end against real Kraken Futures data for BTC/ETH/SOL:
+confirmed the funding history fetch, hourly resample/forward-fill, and
+join onto 4h OHLCV all produce non-NaN features (`ATR_ratio`,
+`funding_rate`) on the current bar, and that the underlying signal (both
+gated and ungated) fires correctly on recent history (13 raw / 5
+regime-filtered signals in the trailing 90 bars on BTC at time of
+writing) even though no NEW signal happened to fire on the exact latest
+candle during this check — expected, since this repo's own numbers
+already show this is not a high-frequency signal.
+
+State lives in `data/paper_trades_funding.csv`, independent of
+`paper_test_live.py`'s `data/paper_trades.csv`. Like section 12, this is
+ongoing: the signal is not frequent, so a meaningful live sample needs
+weeks, ideally run on a schedule (e.g. a Routine) rather than checked
+once.
+
+```bash
+python scripts/paper_test_funding_live.py --assets BTC/USD:USD ETH/USD:USD SOL/USD:USD
+```
+
 ## Project structure
 
 ```
@@ -1153,16 +1550,20 @@ trading-bot/
 │   ├── backtest_meta_ml.py            # Single-asset meta-labeling backtest
 │   ├── backtest_meta_ml_walkforward.py# Walk-forward validation of the meta-labeling model
 │   ├── backtest_cross_sectional.py    # Cross-sectional ranking strategy across assets
-│   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9) and daily-timeframe experiment (§10)
+│   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9), daily-timeframe experiment (§10), OBV divergence (§20)
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
+│   ├── paper_test_funding_live.py     # Same, for the regime-filtered funding signal (§26)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
+│   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§19, §23)
+│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§24)
+│   ├── backtest_btc_lead_lag.py       # BTC-lead-lag cross-asset signal backtest (§21)
 │   └── backtest_grid.py               # Grid Trading bot backtest
 ├── src/
 │   ├── config.py               # Project settings and paths
 │   ├── metrics.py              # Standard win-rate calculation (per closed trade)
 │   ├── labeling.py             # Rule-based primary signals and Triple-Barrier labeling
 │   ├── execution.py            # Maker order-queue simulation: optimistic OHLC-based fills (§9)
-│   ├── paper_trading.py        # Live shadow-simulation state machine (§12)
+│   ├── paper_trading.py        # Live shadow-simulation state machine (§12, §26)
 │   ├── market_making.py        # Two-sided quote/fill/inventory simulator with skew (§13)
 │   ├── regime.py               # Idea 1: market-regime context and the btc_alignment feature
 │   ├── calibration.py          # Idea 3: precision-based threshold calibration (instead of F1)
