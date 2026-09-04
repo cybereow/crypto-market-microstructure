@@ -63,6 +63,11 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §11-b | Same OBI signal re-tested at tick level (5-second bars): strongly significant (p=0.0003), robust to a direction-flip check and a time-split check | Real edge — but ~10x too small to clear even optimistic maker fees |
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
+| §14 | "3-4 signals/day" digest: a fixed, unfitted conviction score ranks a wide candidate pool and spends a daily budget on the best. The ranking has real power (permutation p=0.0002) — but only at a selectivity the daily quota forbids; forcing 4/day dilutes it to a loss | Frequency solved, **profit not** — breakeven at maker cost, loses at taker |
+| §15 | Daily **cross-sectional momentum** (long strongest / short weakest, dollar-neutral, 4 signals/day): +32.3%/yr and Sharpe 0.94 at maker cost **after real funding cost**, stable in both out-of-sample halves (0.95 / 1.03); reversal loses everywhere (clean direction check). Pre-registered p=0.026, deflated to 0.24 | **Best result** — real, stable, cost- and funding-clearing edge; strict significance still borderline |
+| §16 | Improving §15: a **20-asset, quartile-breadth (M=5, 10 signals/day)** momentum book keeps Sharpe ~1.07 but **halves max drawdown (−36%→−18%)**, stable OOS (0.98/1.14). Vol-targeting was ~neutral; a funding-**carry** factor helped narrow books but hurt broad ones (not robust) | Diversification is the real win (smoother book); the clever factors didn't hold up — and taker is still flat |
+| §17 | Attacking the **taker wall** via turnover: an overlapping (Jegadeesh-Titman laddered) **14-day rebalance** cuts turnover 4x (0.41→0.10) and lifts taker Sharpe from ~0.10 to **~0.68 (+13%/yr, −18% DD)** — the first taker-cost-positive book in the log; maker significant (p=0.035). Caught and rejected a lucky single-phase Sharpe 0.89 first | **A real crack in the §8 wall** — positive after full retail cost, though taker significance still borderline (edge concentrated in 2024-25) |
+| §18 | The **aggressive** config: variable-in-time leverage (volatility targeting) lifts the §17 book's Sharpe 0.99→**1.34** and, scaled ~2.1x, *backtests* **~55%/yr maker (−29% DD), +37%/yr taker**, positive every year incl. the 2022 bear. Conviction-|z| sizing was tested and **rejected** (lowered Sharpe) | 50%+ is reachable but it's **leverage, not alpha** — matching ~35-40% drawdown, liquidation & maker-fill risk; forward expectation well below the backtest |
 
 ## Project layout
 
@@ -84,7 +89,11 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
-│   └── backtest_grid.py                # Grid trading backtest
+│   ├── backtest_grid.py                # Grid trading backtest
+│   ├── daily_signal_report.py         # "3-4 signals/day" digest: rank a wide pool, spend a daily budget (§14)
+│   ├── cross_sectional_report.py      # Daily cross-sectional long/short momentum — the §15 result
+│   ├── cross_sectional_v2.py          # §16-17: wider universe, carry ablation, low-turnover overlapping rebalance
+│   └── leveraged_book.py              # §18: the aggressive config — variable-in-time (vol-targeted) leverage
 ├── src/
 │   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
 │   ├── execution.py      # Maker-order queue fill simulation (§9)
@@ -92,6 +101,8 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── paper_trading.py  # Live shadow paper-trading state machine (§12)
 │   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
 │   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
+│   ├── daily_signals.py  # Daily-digest engine: candidate pool + fixed conviction ranking + daily budget (§14)
+│   ├── cross_sectional_daily.py  # Daily cross-sectional long/short book + turnover-aware backtest (§15)
 │   ├── metrics.py        # Trade-level win rate / profit factor
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
 ├── tests/                # 96 unit tests
