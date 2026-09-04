@@ -42,7 +42,7 @@ project.
   paper-trader that checks a backtest's assumptions against real exchange
   quotes without ever risking capital
   ([`src/paper_trading.py`](src/paper_trading.py)).
-- **96 passing unit tests** covering the statistical and execution logic, not
+- **170+ passing unit tests** covering the statistical and execution logic, not
   just the happy path.
 
 ## Key findings
@@ -63,14 +63,19 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 | §11-b | Same OBI signal re-tested at tick level (5-second bars): strongly significant (p=0.0003), robust to a direction-flip check and a time-split check | Real edge — but ~10x too small to clear even optimistic maker fees |
 | §12 | Live shadow paper-test of the maker-fill hypothesis against real exchange quotes, zero capital at risk | Ongoing (signal is rare; needs weeks of data) |
 | §13 | Market-making simulator: real top-of-book spread is thinner than the fee itself; volatility-scaled quoting still loses to adverse selection from once-per-bar (stale) requoting | **Rejected** — diagnosed root cause, not a bug |
-| §14 | Funding-rate-extreme reversion (fade crowded long/short perpetual positioning) — a new alt-data signal, single a-priori config, pooled 2020-2026: maker-cost PF 1.07, exp +0.14%, p=0.112 | Promising, but **not significant** |
-| §15 | OBV divergence (fade a price breakout volume doesn't confirm) — maker PF 1.02 looked marginal, but unfilled candidates would-be won 76.4% vs 46.5% for filled | **Null** — adverse-selected away |
-| §16 | BTC-lead-lag on altcoins (trade ETH/SOL off BTC's own momentum) — cross-asset, pooled 2020-2026 | **Null** — negative expectancy even at maker cost |
-| §17 | LLM (Claude-API-shaped) approval gate on §14's funding signal — real API calls, real money, 1508 candidates: gate approved 2 (0.13%), and those 2 underperformed the ungated pool | **Null** — no evidence the gate adds value |
-| §18 | Price confirmation (bb_position) added on top of §14's funding signal, single a-priori threshold | **Null** — moved p from 0.112 to 0.310, not closer to significant |
-| §19 | Walk-forward stability check on §14's signal: 6 sequential yearly folds, same maker-fill methodology | **Mixed** — 4/6 folds positive (2 non-adjacent stretches, one p=0.016 alone), 2/6 negative (incl. the 2022 crash) |
-| §20 | Regime-filtering §14's signal off during volatility expansion (reusing `range_fade`'s existing ATR_ratio<1.05 cutoff) — pooled 2020-2026, single a-priori filter | **Significant** — maker PF 1.15, exp +0.26%, p=0.013 (p=0.0385 after deflating for 3 configs tried); walk-forward: 3 of 6 folds individually significant, 2 still negative |
-| §21 | Live shadow paper-test of §20's signal against real Kraken Futures quotes, zero capital at risk | Ongoing (signal is not frequent; needs weeks of data) |
+| §14 | "3-4 signals/day" digest: a fixed, unfitted conviction score ranks a wide candidate pool and spends a daily budget on the best. The ranking has real power (permutation p=0.0002) — but only at a selectivity the daily quota forbids; forcing 4/day dilutes it to a loss | Frequency solved, **profit not** — breakeven at maker cost, loses at taker |
+| §15 | Daily **cross-sectional momentum** (long strongest / short weakest, dollar-neutral, 4 signals/day): +32.3%/yr and Sharpe 0.94 at maker cost **after real funding cost**, stable in both out-of-sample halves (0.95 / 1.03); reversal loses everywhere (clean direction check). Pre-registered p=0.026, deflated to 0.24 | **Best result** — real, stable, cost- and funding-clearing edge; strict significance still borderline |
+| §16 | Improving §15: a **20-asset, quartile-breadth (M=5, 10 signals/day)** momentum book keeps Sharpe ~1.07 but **halves max drawdown (−36%→−18%)**, stable OOS (0.98/1.14). Vol-targeting was ~neutral; a funding-**carry** factor helped narrow books but hurt broad ones (not robust) | Diversification is the real win (smoother book); the clever factors didn't hold up — and taker is still flat |
+| §17 | Attacking the **taker wall** via turnover: an overlapping (Jegadeesh-Titman laddered) **14-day rebalance** cuts turnover 4x (0.41→0.10) and lifts taker Sharpe from ~0.10 to **~0.68 (+13%/yr, −18% DD)** — the first taker-cost-positive book in the log; maker significant (p=0.035). Caught and rejected a lucky single-phase Sharpe 0.89 first | **A real crack in the §8 wall** — positive after full retail cost, though taker significance still borderline (edge concentrated in 2024-25) |
+| §18 | The **aggressive** config: variable-in-time leverage (volatility targeting) lifts the §17 book's Sharpe 0.99→**1.34** and, scaled ~2.1x, *backtests* **~55%/yr maker (−29% DD), +37%/yr taker**, positive every year incl. the 2022 bear. Conviction-|z| sizing was tested and **rejected** (lowered Sharpe) | 50%+ is reachable but it's **leverage, not alpha** — matching ~35-40% drawdown, liquidation & maker-fill risk; forward expectation well below the backtest |
+| §19 | Funding-rate-extreme reversion (fade crowded long/short perpetual positioning) — a new alt-data signal, single a-priori config, pooled 2020-2026: maker-cost PF 1.07, exp +0.14%, p=0.112 | Promising, but **not significant** |
+| §20 | OBV divergence (fade a price breakout volume doesn't confirm) — maker PF 1.02 looked marginal, but unfilled candidates would-be won 76.4% vs 46.5% for filled | **Null** — adverse-selected away |
+| §21 | BTC-lead-lag on altcoins (trade ETH/SOL off BTC's own momentum) — cross-asset, pooled 2020-2026 | **Null** — negative expectancy even at maker cost |
+| §22 | LLM (Claude-API-shaped) approval gate on §19's funding signal — real API calls, real money, 1508 candidates: gate approved 2 (0.13%), and those 2 underperformed the ungated pool | **Null** — no evidence the gate adds value |
+| §23 | Price confirmation (bb_position) added on top of §19's funding signal, single a-priori threshold | **Null** — moved p from 0.112 to 0.310, not closer to significant |
+| §24 | Walk-forward stability check on §19's signal: 6 sequential yearly folds, same maker-fill methodology | **Mixed** — 4/6 folds positive (2 non-adjacent stretches, one p=0.016 alone), 2/6 negative (incl. the 2022 crash) |
+| §25 | Regime-filtering §19's signal off during volatility expansion (reusing `range_fade`'s existing ATR_ratio<1.05 cutoff) — pooled 2020-2026, single a-priori filter | **Significant** — maker PF 1.15, exp +0.26%, p=0.013 (p=0.0385 after deflating for 3 configs tried); walk-forward: 3 of 6 folds individually significant, 2 still negative |
+| §26 | Live shadow paper-test of §25's signal against real Kraken Futures quotes, zero capital at risk | Ongoing (signal is not frequent; needs weeks of data) |
 
 ## Project layout
 
@@ -88,28 +93,34 @@ reproduce every one of these — lives in **[`docs/RESEARCH_LOG.md`](docs/RESEAR
 │   ├── backtest_meta_ml.py             # Single-asset meta-labeling backtest
 │   ├── backtest_meta_ml_walkforward.py # The real validator: pooled, purged, walk-forward
 │   ├── backtest_cross_sectional.py     # Cross-sectional ranking strategy
-│   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11, §15)
+│   ├── backtest_maker_fill.py          # Maker-fill queue simulation + significance testing (§9-11, §20)
 │   ├── backtest_market_making.py       # Market-making simulator ablation (§13)
-│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§14, §18, §20)
-│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19, §20)
-│   ├── backtest_btc_lead_lag.py        # BTC-lead-lag cross-asset signal backtest (§16)
+│   ├── backtest_funding_reversion.py   # Funding-rate-extreme reversion signal backtest (§19, §23, §25)
+│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§24, §25)
+│   ├── backtest_btc_lead_lag.py        # BTC-lead-lag cross-asset signal backtest (§21)
 │   ├── paper_test_live.py              # Live shadow paper-trader, zero capital risk (§12)
-│   ├── paper_test_funding_live.py      # Same, for the regime-filtered funding signal (§14, §20, §21)
+│   ├── paper_test_funding_live.py      # Same, for the regime-filtered funding signal (§19, §25, §26)
 │   ├── paper_test_llm.py               # Same, but an LLM (Claude) must approve each candidate first
 │   ├── backtest_llm_gate.py            # LLM gate backtested against already-downloaded history
 │   ├── find_pairs.py / backtest_pairs.py  # Statistical-arbitrage pairs trading
-│   └── backtest_grid.py                # Grid trading backtest
+│   ├── backtest_grid.py                # Grid trading backtest
+│   ├── daily_signal_report.py         # "3-4 signals/day" digest: rank a wide pool, spend a daily budget (§14)
+│   ├── cross_sectional_report.py      # Daily cross-sectional long/short momentum — the §15 result
+│   ├── cross_sectional_v2.py          # §16-17: wider universe, carry ablation, low-turnover overlapping rebalance
+│   └── leveraged_book.py              # §18: the aggressive config — variable-in-time (vol-targeted) leverage
 ├── src/
 │   ├── labeling.py       # Rule-based primary signals + triple-barrier labeling
 │   ├── execution.py      # Maker-order queue fill simulation (§9)
 │   ├── market_making.py  # Two-sided quote/fill/inventory simulator with skew (§13)
-│   ├── paper_trading.py  # Live shadow paper-trading state machine (§12, §21)
+│   ├── paper_trading.py  # Live shadow paper-trading state machine (§12, §26)
 │   ├── llm_decision.py   # LLM (Claude) approve/reject gate for paper_test_llm.py
 │   ├── significance.py   # Bootstrap/permutation testing, deflated p-values
 │   ├── regime.py / gating.py / calibration.py / novelty.py  # The four ablated ML ideas (§7)
+│   ├── daily_signals.py  # Daily-digest engine: candidate pool + fixed conviction ranking + daily budget (§14)
+│   ├── cross_sectional_daily.py  # Daily cross-sectional long/short book + turnover-aware backtest (§15)
 │   ├── metrics.py        # Trade-level win rate / profit factor
 │   └── strategies/       # Pairs trading, direct-ML, and grid strategy signal logic
-├── tests/                # 96 unit tests
+├── tests/                # 170+ unit tests
 ├── data/                 # Downloaded data and saved models (gitignored)
 └── docs/RESEARCH_LOG.md  # Full experimental log, §1-21
 ```

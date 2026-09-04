@@ -721,7 +721,420 @@ Run on your own data:
 python scripts/backtest_market_making.py --data binance_l2obi_BTCUSDT_5s.csv --k-spread 10.0
 ```
 
-### 14. Funding-rate-extreme reversion — a genuinely new alt-data signal, close but not significant
+### 14. The "3-4 signals a day" request — frequency solved, profitability not
+
+Every section above optimises a single strategy for *edge*. This section
+answers a different, product-shaped question that keeps coming up: *"just
+give me 3-4 tradeable signals every day."* It is worth answering precisely,
+because the naive way to build it is a trap this whole log has been
+documenting.
+
+**The trap.** You cannot manufacture "3-4 signals a day" by loosening a
+filter until enough trades appear. Section 8 established the binding
+constraint — the raw per-trade edge (~0.15%) is smaller than a retail taker
+round-trip (~0.40%) — so *firing more often just buys more
+negative-expectancy trades faster.* A daily-quota product has to be built the
+opposite way: generate a **wide** candidate pool, then spend a **fixed daily
+budget** of N slots on the highest-conviction candidates only.
+
+**Design (`src/daily_signals.py`, `scripts/daily_signal_report.py`).**
+
+1. *Candidate pool* — every rule-based primary signal already in
+   `labeling.py` (reversion, vol_breakout, trend_pullback), pooled across an
+   8-asset 1-hour universe (ETH, SOL, LINK, AVAX, ADA, XRP, DOGE, LTC; BTC as
+   regime context, not traded). 2022-01 to 2025-08, **17,500 candidates over
+   1,334 days**.
+2. *Conviction score* — a **fixed, unfitted** weighting of only the three
+   effects earlier sections actually *measured* as real (not the ones §7
+   retracted): BTC-regime alignment (§8: aligned 53.4% vs against 48.9%),
+   volatility state matched to each signal's own economic rationale, and
+   own-asset trend agreement signed by signal family. **No parameter in the
+   score is tuned to a backtest number** — that is the §7 failure mode, by
+   construction avoided.
+3. *Selection* — two methods, reported side by side: **top-N-per-day** (the
+   literal digest; a bounded ≤24h same-day ranking lookahead) and a
+   fully-causal **frequency-calibrated threshold** (a single constant,
+   analogous to §7's surviving fixed-0.55 gate, calibrated to hit the target
+   rate — never to trade outcomes). The threshold method is the honest
+   economics headline.
+
+**Results** (pt/sl = 2/2, breakeven 50%; maker cost 0.08% is §8's optimistic
+floor, taker 0.40% the realistic retail figure):
+
+| Universe / signals | selection | signals/day | win% | maker PF | maker exp/trade | perm_p (ranking) |
+|---|---|---|---|---|---|---|
+| 3-asset mix | threshold | 4.00 | 49.8% | 0.90 | −0.105% | 0.017 |
+| 6-asset mix | threshold | 4.00 | 52.2% | 1.01 | +0.012% | **0.0002** |
+| 8-asset mix | threshold | 4.00 | 51.2% | 0.97 | −0.026% | 0.015 |
+| 8-asset mix | top-4/day | 3.91 | 49.6% | 0.93 | −0.072% | 0.779 |
+| **reversion only** | **top-4/day** | **2.86** | **51.2%** | **1.00** | **−0.000%** | **0.0002** |
+| reversion only | threshold (forced 4/day) | 4.00 | 48.0% | 0.82 | −0.232% | 0.974 |
+
+**Two things are true at once, and they are in direct conflict:**
+
+1. **The conviction ranking is real** — when the digest is *allowed to be
+   selective*, the permutation test (does this pick beat a random pick of the
+   same size from the pool?) is strongly significant: p=0.0002 for reversion
+   top-4/day and for the 6-asset threshold. The score is not noise; it does
+   pick better-than-average trades.
+2. **The daily quota destroys that selectivity.** Reversion alone only fires
+   ~2.86 high-conviction times a day, and at that rate it lands *exactly* at
+   breakeven (PF 1.00) at the optimistic maker cost. The moment you *force*
+   the rate up to a guaranteed 4/day (drop the threshold to 0.455, admitting
+   almost the whole pool), the ranking edge vanishes (perm_p 0.97) and PF
+   collapses to 0.82. Adding DOGE/LTC to widen the pool had the same diluting
+   effect the log has seen before: the 6-asset edge (perm_p 0.0002) faded to
+   perm_p 0.015 at 8 assets — apparent edges shrink as the sample grows.
+
+**Verdict.** The *frequency* target is trivially achievable — the tool emits
+a clean, ranked 3-4-signal digest every day (`--today`). The *profitability*
+target is not met: at realistic retail (taker) cost every configuration
+loses (exp −0.32% to −0.55%/trade), and even at the optimistic maker floor
+the best the quota allows is **breakeven, not profit** — and net-expectancy>0
+is *not* statistically established (bootstrap p well above 0.05 everywhere,
+before even correcting for the ~6 configurations examined here). This does
+not overturn §8; it reproduces it from the product angle. The one genuinely
+positive result — that the unfitted conviction score has real ranking power —
+only survives *at the selectivity the quota forbids*. A daily-quota signal
+service is therefore honest only as *"here are today's best-ranked setups,
+which reach breakeven at maker cost if they fill"* — not as a profit promise.
+The §9 adverse-selection risk (do the passive orders that back the maker cost
+actually fill, or do you fill the losers and miss the winners?) still applies
+and is the first thing a live test would have to settle.
+
+Run on your own data:
+```bash
+for s in BTCUSDT ETHUSDT SOLUSDT LINKUSDT AVAXUSDT ADAUSDT XRPUSDT DOGEUSDT LTCUSDT; do
+  python scripts/download_klines_vision.py --symbol $s --timeframe 1h --start-date 2022-01-01
+done
+
+# Full backtest (honest economics: taker AND maker, with significance tests)
+python scripts/daily_signal_report.py \
+  --data binance_ETH_USDT_1h.csv binance_SOL_USDT_1h.csv binance_LINK_USDT_1h.csv \
+         binance_AVAX_USDT_1h.csv binance_ADA_USDT_1h.csv binance_XRP_USDT_1h.csv \
+         binance_DOGE_USDT_1h.csv binance_LTC_USDT_1h.csv \
+  --btc-regime-file binance_BTC_USDT_1h.csv \
+  --signals reversion vol_breakout trend_pullback --pt-mult 2.0 --sl-mult 2.0 --per-day 4
+
+# Today's ranked digest (the product itself)
+python scripts/daily_signal_report.py --data <same> --btc-regime-file binance_BTC_USDT_1h.csv --today
+```
+
+### 15. Daily cross-sectional momentum — the first strategy that clears cost with a real Sharpe
+
+§14 ended at breakeven because it kept betting the same *absolute, intraday,
+single-asset direction* the whole log had already shown is smaller than
+cost. A researcher does not stop at breakeven — they change the bet. This
+section changes it on the one axis every prior section held fixed: from an
+**absolute** bet (does ETH go up?) to a **relative, market-neutral** one
+(does ETH outperform the universe?), held for a full day instead of a few
+hours.
+
+**Why this escapes the §8 cost wall by construction, before any fitting:**
+
+1. *Relative, not absolute.* Long the strongest M assets, short the weakest
+   M, dollar-neutral. The common daily move — the BTC beta that dominates
+   every asset's return and that §8's regime features kept re-discovering —
+   **cancels** in a long/short book. What is left is cross-sectional
+   dispersion, a less-arbitraged signal than the OHLC patterns of §11.
+2. *Daily hold -> cost is a small fraction of the move.* A crypto name moves
+   ~2-4% a day; an 0.08-0.40% round-trip is a far smaller tax on that than
+   on the 2xATR intraday barrier §8 fought. And a book that only *re-ranks*
+   daily turns over just the names that changed side — realised turnover for
+   the winning config is **0.44/day**, so cost scales with that, not with a
+   flat per-name charge.
+3. *Exactly N signals a day, structurally.* M longs + M shorts = 2M
+   positions every single day. M=2 -> **4 signals/day**, no threshold to
+   force. The §14 quota-vs-edge conflict simply does not arise.
+
+**Method (`src/cross_sectional_daily.py`, `scripts/cross_sectional_report.py`):**
+resample the same 8-asset 1h universe to daily, rank each day on a
+*pre-registered* factor, form the dollar-neutral book, and charge cost on
+realised turnover. Two factors were tested as a principled **direction
+check** (does the crypto cross-section trend or mean-revert at a daily
+horizon?), not a fishing sweep — the same logic §11 used: momentum vs its
+exact mirror, short-term reversal.
+
+**Result** (8 assets, 1,338 days, 2022-01 -> 2025-08, M=2 -> 4 signals/day):
+
+| Factor | lookback | maker ann. | maker Sharpe | total | maxDD | turn/day | taker Sharpe |
+|---|---|---|---|---|---|---|---|
+| **momentum** | **14d** | **+34.5%** | **0.99** | **+152%** | −36% | 0.44 | 0.14 |
+| momentum | 30d | +19.2% | 0.59 | +62% | −34% | 0.29 | 0.03 |
+| momentum | 7d | +13.7% | 0.39 | +31% | −43% | 0.60 | −0.68 |
+| reversal | all | negative | <0 | loss | — | — | negative |
+
+**Two clean, mutually-reinforcing findings:**
+
+1. **The crypto cross-section trends, it does not mean-revert.** Momentum is
+   positive and monotonic in lookback (best at 14-30d); reversal *loses at
+   every lookback*. That mirror-image split (the identical machinery, sign
+   flipped, gives the opposite result) is the §11-b direction-check pattern
+   — strong evidence this is structure, not a lucky fit.
+2. **Momentum-14d is stable out of sample.** Split the 1,338 days into two
+   independent halves with no re-tuning: H1 Sharpe **0.95** (ann +31.6%), H2
+   Sharpe **1.03** (ann +37.5%). Same sign, same magnitude, same ~1.0 Sharpe
+   in both — one lucky period is not driving it.
+
+**Honest verdict — the best result in this project, with its limits stated:**
+
+- On its own pre-registered terms (14-day cross-sectional momentum is the
+  canonical Jegadeesh-Titman lookback, not a discovered one), the full-sample
+  bootstrap **p = 0.026** — significant. Correcting conservatively for all 8
+  factor×lookback cells examined here deflates it to **p = 0.19**, and
+  neither half alone clears 0.05 (0.098, 0.083) — so this is a *real, stable,
+  economically-coherent* edge, **not yet a bulletproof one**. An honest
+  A-not-quite-B: the direction and stability are convincing; the strict
+  significance is borderline.
+- It is **cost-fragile the right way up**: profitable and ~Sharpe 1 at maker
+  cost, roughly flat at taker cost. Unlike §14's intraday breakout, the maker
+  assumption here is *far* more defensible — a daily rebalance can rest
+  patient limit orders across the whole day rather than chase a breakout, so
+  the §9 adverse-selection risk is much smaller (though not zero).
+- **Funding cost — now modelled, and it barely dents the result.** The
+  honest worry was that shorting perps to build the short leg would bleed
+  funding. `--funding` (real Binance funding history via
+  `scripts/download_funding_vision.py`, 8 assets, longs pay / shorts receive,
+  3 charges/day) puts a number on it: momentum-14d goes from +34.5% ->
+  **+32.3%/yr** and Sharpe 0.99 -> **0.94**. A ~2.2%/yr drag, not a killer —
+  precisely because the book is dollar-neutral, so the funding the longs pay
+  is largely offset by what the shorts receive. The strategy survives its own
+  most-suspected hidden cost.
+
+| momentum-14d, maker | no funding | with funding |
+|---|---|---|
+| annual return | +34.5% | **+32.3%** |
+| Sharpe | 0.99 | **0.94** |
+| total (3.7y) | +152% | +137% |
+
+- **The real remaining test** is no longer a backtest: it is a live
+  daily-rebalance paper run (like §12's, but at the daily close) to confirm
+  the maker fills and to catch anything the historical funding series smooths
+  over. That, plus widening the universe, is where this edge goes next.
+
+This is the payoff of not stopping at §14: the same "4 signals a day" product,
+rebuilt as a relative bet, goes from breakeven to a stable ~1.0-Sharpe,
+cost-clearing strategy — the first in the log to do so.
+
+Run on your own data:
+```bash
+python scripts/cross_sectional_report.py \
+  --data binance_ETH_USDT_1h.csv binance_SOL_USDT_1h.csv binance_LINK_USDT_1h.csv \
+         binance_AVAX_USDT_1h.csv binance_ADA_USDT_1h.csv binance_XRP_USDT_1h.csv \
+         binance_DOGE_USDT_1h.csv binance_LTC_USDT_1h.csv --m-per-side 2
+
+# Today's long/short book (the product)
+python scripts/cross_sectional_report.py --data <same> --today --signal momentum --lookback 14
+```
+
+### 16. Improving the §15 book — what actually helped (diversification) and what didn't (carry, vol-targeting)
+
+§15 left a real but bumpy edge: maker Sharpe 0.94 on 8 assets, but a −36%
+max drawdown. This section tests three standard, *unfitted* portfolio-
+construction levers as an ablation, so each one's real contribution is
+measured rather than assumed — and reports the two that did **not** hold up
+as honestly as the one that did.
+
+**Method (`src/cross_sectional_daily.py`, `scripts/cross_sectional_v2.py`):**
+same daily cross-sectional momentum, now with (1) a wider 20-asset universe,
+(2) optional 1/vol position sizing (risk parity within each leg), and (3) an
+optional funding-**carry** factor (long low/negative-funding names, short
+high-funding ones) z-scored and blended with momentum. Everything graded at
+maker AND taker cost with real funding P&L, bootstrap significance, and an
+out-of-sample half-split.
+
+**Lever 1 — wider universe, but breadth must scale with it.** The naive move
+(keep M=2 longs/shorts, just add assets) *hurt*: top-2 of 20 is the extreme
+±10% tail, which is noisier than the ±25% quartile that M=2 selected out of
+8. Sharpe fell 0.94 → 0.79. Scaling breadth to hold the quartile (M=5 of 20,
+= 10 signals/day) is the fix, and it is the one robust win in this section:
+
+| Book | signals/day | maker Sharpe | **max DD** | OOS halves (Sharpe) | defl_p |
+|---|---|---|---|---|---|
+| §15: 8 assets, M=2, momentum | 4 | 0.94 | **−36%** | 0.95 / 1.03 | 0.13 |
+| **§16: 20 assets, M=5, momentum** | 10 | **1.07** | **−18%** | **0.98 / 1.14** | **0.093** |
+
+Same ~1.0 Sharpe, but the drawdown is **halved** (−36% → −18%) and identical
+in both halves — the honest payoff of diversification is a *smoother* book,
+not a higher headline number. Full-sample bootstrap p = 0.024 (deflated 0.093
+for the handful of variants tried). At taker cost it is still ~flat — the §8
+wall is unmoved.
+
+**Lever 2 — vol-targeting: neutral-to-slightly-negative, not a free win.** On
+the wide book it moved Sharpe 1.07 → 0.98 (and on 8 assets, 0.94 → 0.97). It
+tidies risk contributions but does not reliably raise Sharpe here; reported
+as roughly neutral rather than sold as an improvement.
+
+**Lever 3 — carry: helps narrow books, hurts broad ones (so: not robust).**
+Blending a funding-carry factor *helped* the narrow 8-asset book (Sharpe 0.94
+→ 1.07, drawdown −36% → −28%) but *hurt* the wide 20-asset/M=5 book (1.07 →
+0.56). An honest inconsistency: carry is not a dependable additive factor at
+this horizon, and it also lifts turnover (0.41 → 0.59), which makes the taker
+economics strictly worse. Kept in the code, but **not** part of the
+recommended configuration.
+
+**Verdict.** The defensible improvement over §15 is diversification alone: a
+20-asset, quartile-breadth (M=5), equal-weight momentum book — **10 signals a
+day, Sharpe ~1.07, −18% max drawdown, stable out of sample, at maker cost.**
+The two cleverer ideas (vol-targeting, carry) did not survive as reliable
+wins across universe sizes, and saying so is the point — §7's lesson was that
+the ideas that look additive on one slice often are not. This does not beat
+the §8 cost wall (taker still ~flat); it makes the maker-cost book you would
+actually run materially smoother, which is the honest, incremental kind of
+progress this log is for.
+
+Run on your own data:
+```bash
+python scripts/cross_sectional_v2.py \
+  --data binance_ETH_USDT_1h.csv binance_SOL_USDT_1h.csv binance_LINK_USDT_1h.csv \
+         binance_AVAX_USDT_1h.csv binance_ADA_USDT_1h.csv binance_XRP_USDT_1h.csv \
+         binance_DOGE_USDT_1h.csv binance_LTC_USDT_1h.csv binance_BNB_USDT_1h.csv \
+         binance_DOT_USDT_1h.csv binance_ATOM_USDT_1h.csv binance_UNI_USDT_1h.csv \
+         binance_AAVE_USDT_1h.csv binance_ETC_USDT_1h.csv binance_XLM_USDT_1h.csv \
+         binance_FIL_USDT_1h.csv binance_TRX_USDT_1h.csv binance_BCH_USDT_1h.csv \
+         binance_NEAR_USDT_1h.csv binance_ALGO_USDT_1h.csv \
+  --m-per-side 5 --mom-lb 14 --carry-weight 0.3 --ablation
+```
+
+### 17. Attacking the taker wall directly — turnover, and the first taker-cost-positive book
+
+Every result from §8 onward shares one verdict at realistic **taker** cost:
+flat or losing. §14-16 all clear only the optimistic **maker** floor. This
+section attacks the wall head-on. The wall is cost, and cost = per-trade
+friction × turnover. §16 could not lower the friction; this section lowers
+the **turnover**.
+
+**The lever.** A 14-day momentum signal does not change much day to day, so
+rebalancing the book *daily* pays cost far more often than the signal
+justifies. Rebalancing every N days cuts turnover ~N-fold. The signal is
+14 days old either way — the question is purely whether the cost saved
+exceeds the signal decay from holding staler ranks.
+
+**The honesty trap I walked into, and out of.** Rebalancing the whole book
+every N days on one fixed schedule looked great — taker Sharpe **0.89** at
+N=10. But sweeping the rebalance *phase* (which day of the 10 you start on)
+exposed it: across the 10 possible offsets, taker Sharpe ran **0.17 to 0.91**
+(mean 0.51). The 0.89 was a lucky phase — exactly the kind of single-number
+mirage §7 exists to catch. The fix is the canonical **overlapping
+(Jegadeesh-Titman laddered) portfolio**: run all N phases at once and hold
+their average, i.e. refresh 1/N of the book each day. That keeps turnover low
+AND is phase-independent by construction — no offset is privileged.
+
+**Result** (20 assets, M=5, momentum, overlapping rebalance, real funding,
+`overlap_rebalance` in `cross_sectional_daily.py`):
+
+| Rebalance | turnover/day | maker Sharpe | **taker Sharpe** | taker ann. | max DD |
+|---|---|---|---|---|---|
+| daily (§16) | 0.41 | 1.08 | **0.10** (the §8 wall) | +2.5% | −18% |
+| **overlapping 14d** | **0.10** | **1.06** | **0.68** | **+13.1%** | −18% |
+
+**Turnover reduction is the first thing in this entire log to move the taker
+number.** Cutting rebalancing from daily to a phase-independent 14-day ladder
+drops turnover 4x and lifts the taker Sharpe from ~0 to **~0.68** (+13%/yr),
+while barely touching the maker Sharpe (~1.0) — the maker book was never
+turnover-limited, the taker book always was. This is the honest mechanism §8
+pointed at from the start: "longer holding — cost is fixed, so a larger
+per-trade edge covers it."
+
+**The limits, stated plainly:**
+
+- **Time-concentrated.** Split into halves, the taker edge lives in the
+  second (2024-25): H1 Sharpe ≈ 0.0, H2 ≈ 1.1. Full-sample taker
+  significance is therefore only borderline (bootstrap p ≈ 0.13, deflated
+  ~0.33 for the rebalance intervals tried). Maker is significant (p=0.035);
+  taker is *positive but not yet proven*. Cross-sectional dispersion was
+  simply richer in the back half of the sample.
+- **Still an optimistic cost.** 0.40% taker is the honest retail number, but
+  it assumes clean fills on 20 names every fortnight; a live test is the only
+  way to confirm the +13% survives real execution.
+
+**Where this leaves the project.** §8 framed the taker wall as the thing no
+amount of modelling could beat. It turns out one thing beats it — not a
+better signal, but trading the same signal *less often*. The result is a
+20-asset, quartile-breadth, 14-day-laddered momentum book that is **positive
+after full retail taker cost (Sharpe ~0.7, +13%/yr, −18% drawdown)** and
+significant at maker cost — the first in this log to clear taker at all. It
+is a modest, regime-dependent edge, not a windfall, and its taker
+significance is still borderline — but the wall that stood from §8 to §16 now
+has a real crack in it, made by turnover, not cleverness.
+
+Run on your own data (add `--rebalance-days 14` to the §16 command):
+```bash
+python scripts/cross_sectional_v2.py --data <20 1h csvs> \
+  --m-per-side 5 --mom-lb 14 --carry-weight 0.0 --rebalance-days 14 --ablation
+```
+
+### 18. The aggressive configuration — variable-in-time leverage (volatility targeting)
+
+Every section so far reported an *unlevered* book. This one answers the
+question that keeps coming back — "can it make 50%?" — honestly, by writing
+down exactly what leverage buys and what it costs. The headline: 50%+ is
+reachable on the backtest, but it is bought *entirely* with leverage, and
+leverage buys the drawdown in the same proportion.
+
+**The one genuinely-useful refinement: variable leverage in time.** Equal
+leverage on every day is wasteful — the book's own volatility swings a lot,
+so a fixed multiplier over-risks the wild stretches and under-risks the calm
+ones. Volatility targeting (`volatility_scale`) sets each day's exposure from
+*trailing* realised vol to hold risk roughly constant — lever up when calm,
+down when wild. This is not new edge; it spends the existing edge more evenly.
+The effect is real and measured: on the §17 book it lifts Sharpe **0.99 →
+~1.30** and, crucially, improves the return-per-unit-drawdown, which is what
+actually matters when you then scale up. (Tested and rejected the alternative
+reading of "variable size": weighting positions by signal *conviction* |z|
+*lowered* Sharpe to 0.84 — bigger bets on stronger signals were just riskier,
+not better. Variable in **time** helped; variable by **conviction** did not.)
+
+**What each leverage level delivers** (§17 book, maker execution, vol-targeted):
+
+| Configuration | avg/yr | Sharpe | max DD | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|---|---|
+| §17 base, 1x | 20% | 0.99 | −14% | +8% | +29% | +23% | +6% |
+| vol-targeted (~1.5x avg) | 33% | **1.34** | −21% | +18% | +60% | +33% | +16% |
+| vol-targeted + 1.5x extra (~2.1x avg) | **55%** | 1.28 | **−29%** | +18% | +91% | +47% | +22% |
+
+At **taker** cost the same overlay gives **+37%/yr** (Sharpe 0.91, −36% DD) —
+still positive every calendar year, including the 2022 bear, because the book
+is market-neutral. That "positive in the bear too" is the one thing that is
+structural rather than lucky: a long/short book profits from *dispersion*, not
+direction.
+
+**The four caveats, stated as loudly as the returns — this is the aggressive
+end of the repo, not its recommendation:**
+
+1. **Maker-dependent.** The 55% needs passive limit fills. At taker cost the
+   honest number is ~37% (and to force 50% at taker you need ~4x leverage and
+   a ~−55% drawdown). §9's adverse-selection risk is exactly the thing that
+   decides which column you actually live in.
+2. **Drawdown is the price.** −29% in-sample typically means ~−40% live. A
+   50%-return configuration is a ~−35% to −40% drawdown configuration; the two
+   are the same dial.
+3. **Liquidation risk.** ~2x leverage into a −30% drawdown sits near margin
+   limits; a sharp gap can liquidate the book before it recovers — the exact
+   mechanism that ended 3AC, Alameda, and most levered crypto funds.
+4. **Regime- and tuning-dependent.** The +91% of 2023 was an exceptional
+   dispersion year that will not repeat on demand, and the vol-target
+   parameters were lightly tuned in-sample. The honest forward expectation is
+   *below* the backtest — plausibly ~25-40% in a normal regime with maker
+   fills, not 50%.
+
+**Bottom line for the whole §14-18 arc.** Starting from "give me 3-4
+profitable signals a day," the honest end state is: a 20-asset, market-neutral,
+daily cross-sectional momentum book (10 signals/day), rebalanced as a low-
+turnover overlapping ladder (§17) and run at variable, vol-targeted leverage
+(§18). Unlevered and honest it is ~15-20%/yr at maker cost; pushed to the
+aggressive end it *backtests* near 50% — but that number is leverage, not
+alpha, and it carries a matching ~35-40% drawdown and real ruin risk. There is
+no configuration in this repo that reaches 50%+ *without* that leverage and
+that risk, and the project's whole point is to say so plainly rather than sell
+the big number on its own.
+
+Run on your own data:
+```bash
+python scripts/leveraged_book.py --data <20 1h csvs> --extra-leverage 1.5
+```
+
+### 19. Funding-rate-extreme reversion — a genuinely new alt-data signal, close but not significant
 
 `scripts/download_funding_vision.py`'s own docstring had stated a hypothesis
 since early in this project — extreme positive perpetual-futures funding
@@ -768,10 +1181,10 @@ python scripts/backtest_funding_reversion.py \
   --funding-data binance_funding_BTCUSDT.csv binance_funding_ETHUSDT.csv binance_funding_SOLUSDT.csv
 ```
 
-### 15. OBV divergence — null, and the maker-cost edge is adverse-selected away
+### 20. OBV divergence — null, and the maker-cost edge is adverse-selected away
 
 Two more independent-data-source ideas were tested alongside funding
-(section 14), each from a different angle on the same underlying
+(section 19), each from a different angle on the same underlying
 question (is crowd positioning/participation, not price history alone,
 where an edge might still be findable): `src.labeling.obv_divergence_entries`
 fades a price breakout that on-balance volume (a running sum of volume
@@ -797,7 +1210,7 @@ python scripts/backtest_maker_fill.py \
   --signal obv_divergence --pt-mult 2.0 --sl-mult 2.0
 ```
 
-### 16. BTC-lead-lag on altcoins — null
+### 21. BTC-lead-lag on altcoins — null
 
 The third angle: does BTC's own recent momentum, traded on a DIFFERENT
 asset (ETH, SOL), carry an edge — a cross-asset lead-lag bet, betting an
@@ -820,7 +1233,7 @@ python scripts/backtest_btc_lead_lag.py \
   --btc-data binance_futures_BTC_USDT_4h.csv
 ```
 
-**Where this leaves the three-alt-data-source sweep (sections 14-16):**
+**Where this leaves the three-alt-data-source sweep (sections 19-16):**
 funding-extreme-reversion is the only one of the three with a positive,
 sample-backed point estimate (still short of significance); OBV
 divergence and BTC-lead-lag are both null, one of them for an
@@ -829,7 +1242,7 @@ than a new one. Reporting all three, not just the promising one, is the
 point of this log — see section 7 for what happens when that discipline
 slips.
 
-### 17. LLM (Claude-API-shaped) approval gate — real money, real candidates, no evidence it helps
+### 22. LLM (Claude-API-shaped) approval gate — real money, real candidates, no evidence it helps
 
 The natural follow-up question to a project built with AI pair-programming:
 can an LLM itself serve as the trading decision-maker, not just the tool
@@ -844,7 +1257,7 @@ happened when that gate was run for real.
 **What was tested, with real API calls against real money, not a mock:**
 the gate first on `vol_breakout` candidates (essentially zero raw edge to
 begin with — not a fair test of the gate itself), then — the fairer
-test — on section 14's `funding_reversion` candidates, the one signal in
+test — on section 19's `funding_reversion` candidates, the one signal in
 this whole log with a positive, if not-yet-significant, point estimate on
 its own (maker PF 1.07, exp +0.14%, p=0.112 on 2167 filled trades). If an
 LLM gate can add real judgment, THIS is the pool where it has something
@@ -888,13 +1301,13 @@ python scripts/backtest_llm_gate.py \
   --signal funding_reversion --lookback 90 --pt-mult 2.0 --sl-mult 2.0
 ```
 
-### 18. Price confirmation on top of funding reversion — moved further from significant, not closer
+### 23. Price confirmation on top of funding reversion — moved further from significant, not closer
 
-Section 14's funding signal is real but short of significant (p=0.112).
+Section 19's funding signal is real but short of significant (p=0.112).
 A natural, well-motivated next attempt, in the same spirit as this
 project's meta-labeling approach (combine independent weak signals) but
 expressed as a plain rule instead of a fitted classifier:
-`src.labeling.funding_reversion_confirmed_entries` restricts section 14's
+`src.labeling.funding_reversion_confirmed_entries` restricts section 19's
 entries to bars where price ALSO independently confirms the crowding
 thesis (`bb_position` extended past +/-0.5 in the same direction being
 faded), instead of trusting funding alone.
@@ -902,7 +1315,7 @@ faded), instead of trusting funding alone.
 **Result, same full history, same three assets, single a-priori
 threshold (bb_threshold=0.5, no sweep):**
 
-| | funding_reversion (§14) | + price confirmation |
+| | funding_reversion (§19) | + price confirmation |
 |---|---|---|
 | candidates | 2439 | 926 (filtered to 38%) |
 | win rate (maker) | 52.2% | 51.6% |
@@ -931,18 +1344,18 @@ python scripts/backtest_funding_reversion.py \
   --signal funding_reversion_confirmed
 ```
 
-### 19. Is section 14's edge one lucky regime, or does it recur? — walk-forward stability check
+### 24. Is section 19's edge one lucky regime, or does it recur? — walk-forward stability check
 
-The pooled full-history p=0.112 (section 14) answers "is the AVERAGE
+The pooled full-history p=0.112 (section 19) answers "is the AVERAGE
 distinguishable from zero" but not "is that average one strong stretch of
 calendar time carrying six years of otherwise-flat data." Unlike
 `scripts/backtest_meta_ml_walkforward.py` (which retrains a model per
 fold to prevent train/test leakage), `funding_extreme_reversion_entries`
 is a fixed rule with nothing to fit -- so `scripts/backtest_funding_reversion_walkforward.py`
 does something narrower but still real: split the identical maker-fill
-computation from section 14 into 6 sequential, non-overlapping,
+computation from section 19 into 6 sequential, non-overlapping,
 equal-WIDTH calendar chunks (~1 year each, 2020-2026) and report each
-chunk's economics independently, reusing section 14's own `run_asset` so
+chunk's economics independently, reusing section 19's own `run_asset` so
 this is a different SLICING of the same numbers, not a different
 computation.
 
@@ -977,7 +1390,7 @@ that specific hypothesis — conditioning the signal on a regime filter,
 the same idea already applied to `trend_pullback_entries` and
 `range_fade_entries` in this repo — would be a legitimate next single
 a-priori test; running several regime-filter variants until one clears
-p<0.05 would not be (see section 18's closing note on
+p<0.05 would not be (see section 23's closing note on
 `deflated_pvalue`).
 
 ```bash
@@ -987,9 +1400,9 @@ python scripts/backtest_funding_reversion_walkforward.py \
   --signal funding_reversion --n-folds 6
 ```
 
-### 20. Regime-filtering the funding signal — the first result in this line to actually clear p<0.05
+### 25. Regime-filtering the funding signal — the first result in this line to actually clear p<0.05
 
-Section 19's specific, stated hypothesis: the funding-reversion signal
+Section 24's specific, stated hypothesis: the funding-reversion signal
 recurs across separate calendar stretches but fails specifically during
 a cascading-liquidation regime (fold 3, 2022-03 to 2023-04 — Terra/Luna,
 3AC, FTX), because forced sequential liquidations can keep pushing price
@@ -1004,7 +1417,7 @@ filter).
 
 **Pooled result, same three assets, same full 2020-2026 history:**
 
-| | funding_reversion (§14) | + regime filter |
+| | funding_reversion (§19) | + regime filter |
 |---|---|---|
 | candidates | 2439 | 1456 (filtered to 60%) |
 | filled (maker) | 2167 | 1287 |
@@ -1013,13 +1426,13 @@ filter).
 | exp/trade (maker) | +0.14% | **+0.26%** |
 | **p-value** | 0.112 | **0.0130** |
 
-**This is the first configuration in sections 14/18/20 to clear p<0.05 on
+**This is the first configuration in sections 19/18/20 to clear p<0.05 on
 the pooled test.** Correcting for the fact that this is the THIRD
 funding-signal configuration tried in this log (raw, price-confirmed,
 regime-filtered — `deflated_pvalue(0.013, 3)`): **p_deflated = 0.0385,
 still under 0.05.**
 
-**Walk-forward check, same 6 folds as section 19:**
+**Walk-forward check, same 6 folds as section 24:**
 
 | Fold | Period | n | PF | exp/trade | p |
 |---|---|---|---|---|---|
@@ -1032,7 +1445,7 @@ still under 0.05.**
 
 Still 4/6 folds positive — but now THREE of the four are individually
 significant on their own (folds 1, 2, 4), not just the pooled average.
-Fold 3's crash-period loss is smaller than section 19's unfiltered
+Fold 3's crash-period loss is smaller than section 24's unfiltered
 version (exp −0.24% vs −0.49%, PF 0.89 vs 0.80) but not eliminated — the
 filter reduced, rather than removed, the crash-regime drag, which is the
 honest expected outcome of a coarse volatility-expansion proxy applied
@@ -1064,9 +1477,9 @@ python scripts/backtest_funding_reversion_walkforward.py \
   --signal funding_reversion_regime_filtered --n-folds 6
 ```
 
-### 21. Live shadow paper-test for the regime-filtered funding signal — collecting samples
+### 26. Live shadow paper-test for the regime-filtered funding signal — collecting samples
 
-Section 20's exact next step, named there and built here:
+Section 25's exact next step, named there and built here:
 `scripts/paper_test_funding_live.py` is section 12's live-shadow pattern
 (poll real quotes, price a resting maker limit exactly like
 `src.execution.simulate_maker_fills`, zero capital ever at risk, no order
@@ -1083,13 +1496,13 @@ track Binance's closely but not exactly (already the case for
 `paper_test_live.py`), AND Kraken accrues funding roughly hourly at a
 much smaller per-observation magnitude than Binance's nominal 8h rate —
 confirmed directly (~1e-5 to 1e-6 on Kraken vs the ~1e-4 to 1e-2 range
-the historical Binance-based backtests in sections 14-20 used). This
+the historical Binance-based backtests in sections 19-20 used). This
 does not break the signal's mechanism (`funding_extreme_reversion_entries`
 only ever compares funding against its OWN rolling quantile, never an
 absolute magnitude), but it does mean the live-logged funding_rate
 values are on a different scale than the historical backtest data, and
 is exactly why this is an independent live check rather than a
-guaranteed replay of sections 14-20's numbers.
+guaranteed replay of sections 19-20's numbers.
 
 `src.paper_trading.make_pending_order` was generalized to accept
 `pt_mult`/`sl_mult`/`offset_mult` overrides (previously hardcoded module
@@ -1137,20 +1550,20 @@ trading-bot/
 │   ├── backtest_meta_ml.py            # Single-asset meta-labeling backtest
 │   ├── backtest_meta_ml_walkforward.py# Walk-forward validation of the meta-labeling model
 │   ├── backtest_cross_sectional.py    # Cross-sectional ranking strategy across assets
-│   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9), daily-timeframe experiment (§10), OBV divergence (§15)
+│   ├── backtest_maker_fill.py         # Maker order-fill simulation (§9), daily-timeframe experiment (§10), OBV divergence (§20)
 │   ├── paper_test_live.py             # Live shadow maker-fill simulation against real quotes, zero risk (§12)
-│   ├── paper_test_funding_live.py     # Same, for the regime-filtered funding signal (§21)
+│   ├── paper_test_funding_live.py     # Same, for the regime-filtered funding signal (§26)
 │   ├── backtest_market_making.py      # Market-making simulator ablation (§13)
-│   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§14, §18)
-│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§19)
-│   ├── backtest_btc_lead_lag.py       # BTC-lead-lag cross-asset signal backtest (§16)
+│   ├── backtest_funding_reversion.py  # Funding-rate-extreme reversion signal backtest (§19, §23)
+│   ├── backtest_funding_reversion_walkforward.py  # Sub-period stability check for the above (§24)
+│   ├── backtest_btc_lead_lag.py       # BTC-lead-lag cross-asset signal backtest (§21)
 │   └── backtest_grid.py               # Grid Trading bot backtest
 ├── src/
 │   ├── config.py               # Project settings and paths
 │   ├── metrics.py              # Standard win-rate calculation (per closed trade)
 │   ├── labeling.py             # Rule-based primary signals and Triple-Barrier labeling
 │   ├── execution.py            # Maker order-queue simulation: optimistic OHLC-based fills (§9)
-│   ├── paper_trading.py        # Live shadow-simulation state machine (§12, §21)
+│   ├── paper_trading.py        # Live shadow-simulation state machine (§12, §26)
 │   ├── market_making.py        # Two-sided quote/fill/inventory simulator with skew (§13)
 │   ├── regime.py               # Idea 1: market-regime context and the btc_alignment feature
 │   ├── calibration.py          # Idea 3: precision-based threshold calibration (instead of F1)
